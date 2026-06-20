@@ -1,16 +1,23 @@
-# Marvento Rate Desk V10 Manual
+# Marvento Rate Desk V11 Manual
 
-Manual quotation version with Marvento logo, official company details, clean quote lines, automatic totals, and PDF quotation download.
+Manual quotation app for Marvento Shipping LLC.
 
-## Login
-Username: kiran.dxb@marventoshipping.com
-Password: ChangeMe123
+## V11 updates
+- Cargo Details now has `+ Add cargo row` for Air, Sea, Courier, and Land.
+- AI-assisted cargo extraction from pasted email text and uploaded PDF/TXT/CSV files.
+- Air/Courier/Land quotations show dimensions and chargeable weight.
+- Sea quotations show equipment/container type, quantity, and gross weight.
+- PDF quotation includes Marvento logo and company details.
 
-## Upload to GitHub
-Upload these files to the repository root:
+## Deploy
+Upload these files to GitHub:
 - app.py
 - requirements.txt
 - README.md
 - marvento_logo.png
 
-Streamlit will redeploy automatically.
+Streamlit Cloud will redeploy automatically.
+
+## Login
+Username: kiran.dxb@marventoshipping.com
+Password: ChangeMe123

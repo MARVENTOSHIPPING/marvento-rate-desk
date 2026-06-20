@@ -1,4 +1,5 @@
 import base64
+import re
 from datetime import date
 from io import BytesIO
 from pathlib import Path
@@ -6,6 +7,10 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 from PIL import Image
+try:
+    from pypdf import PdfReader
+except Exception:
+    PdfReader = None
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
@@ -91,7 +96,9 @@ def init_state():
             {"Description": "", "Carrier": "", "Unit": 1.0, "Unit Price": 0.0, "VAT/Tax %": 0.0, "Currency": "AED"},
         ]
     if "cargo_lines" not in st.session_state:
-        st.session_state.cargo_lines = [{"Equipment": "20DV", "Qty": 1, "Gross Weight KG": 0.0, "Cargo Details": ""}]
+        st.session_state.cargo_lines = [{"Pieces": 1, "Length CM": 0.0, "Width CM": 0.0, "Height CM": 0.0, "Gross Weight KG": 0.0, "Cargo Details": ""}]
+    if "sea_cargo_lines" not in st.session_state:
+        st.session_state.sea_cargo_lines = [{"Equipment": "20DV", "Qty": 1, "Gross Weight KG": 0.0, "Cargo Details": ""}]
 
 
 def line_total(line):
@@ -101,7 +108,79 @@ def line_total(line):
     return unit * price * (1 + vat / 100)
 
 
-def make_pdf(enq, lines, totals_by_currency, total_aed):
+def cargo_cbm(line):
+    pcs = float(line.get("Pieces", 0) or 0)
+    l = float(line.get("Length CM", 0) or 0)
+    w = float(line.get("Width CM", 0) or 0)
+    h = float(line.get("Height CM", 0) or 0)
+    return pcs * l * w * h / 1000000
+
+
+def cargo_vol_kg(line, mode):
+    cbm = cargo_cbm(line)
+    if mode == "Courier":
+        pcs = float(line.get("Pieces", 0) or 0)
+        l = float(line.get("Length CM", 0) or 0)
+        w = float(line.get("Width CM", 0) or 0)
+        h = float(line.get("Height CM", 0) or 0)
+        return pcs * l * w * h / 5000
+    if mode == "Land":
+        return cbm * 333
+    return cbm * 167
+
+
+def total_chargeable(lines, mode):
+    gross = sum(float(x.get("Gross Weight KG", 0) or 0) for x in lines)
+    volume = sum(cargo_vol_kg(x, mode) for x in lines)
+    return max(gross, volume)
+
+
+def extract_text_from_upload(file):
+    name = file.name.lower()
+    data = file.read()
+    try:
+        if name.endswith(".pdf") and PdfReader is not None:
+            reader = PdfReader(BytesIO(data))
+            return "\n".join(page.extract_text() or "" for page in reader.pages)
+        if name.endswith((".txt", ".csv", ".eml")):
+            return data.decode("utf-8", errors="ignore")
+    except Exception:
+        return ""
+    return ""
+
+
+def ai_extract_cargo_lines(text):
+    text = text.replace("×", "x").replace("X", "x")
+    results = []
+    # Examples: 2 pcs 120x80x60 cm 450 kg, 120 x 80 x 60 / 2 pkgs / 450kgs
+    dim_pattern = re.compile(r"(?:(\d+)\s*(?:pcs|pc|pkgs|pkg|ctns|ctn|packages|package)\D{0,20})?(\d+(?:\.\d+)?)\s*x\s*(\d+(?:\.\d+)?)\s*x\s*(\d+(?:\.\d+)?)\s*(?:cm|cms)?", re.I)
+    weight_pattern = re.compile(r"(gross\s*weight|gw|weight|wt)\D{0,12}(\d+(?:\.\d+)?)\s*(kg|kgs)", re.I)
+    weights = [float(m.group(2)) for m in weight_pattern.finditer(text)]
+    for idx, m in enumerate(dim_pattern.finditer(text)):
+        pcs = int(m.group(1)) if m.group(1) else 1
+        gw = weights[idx] if idx < len(weights) else 0.0
+        results.append({
+            "Pieces": pcs, "Length CM": float(m.group(2)), "Width CM": float(m.group(3)), "Height CM": float(m.group(4)),
+            "Gross Weight KG": gw, "Cargo Details": "AI extracted - please verify"
+        })
+    return results
+
+
+def cargo_summary_table(mode, cargo_lines, sea_lines):
+    if mode == "Sea":
+        rows = [["Equipment", "Qty", "Gross Weight KG", "Cargo Details"]]
+        for c in sea_lines:
+            rows.append([c.get("Equipment",""), str(c.get("Qty",1)), fmt_money(c.get("Gross Weight KG",0)), c.get("Cargo Details","")])
+        return rows
+    rows = [["Pieces", "Dimensions CM", "Gross KG", "CBM", "Vol KG", "Chargeable KG"]]
+    for c in cargo_lines:
+        dims = f"{fmt_money(c.get('Length CM',0))} x {fmt_money(c.get('Width CM',0))} x {fmt_money(c.get('Height CM',0))}"
+        rows.append([str(c.get("Pieces",1)), dims, fmt_money(c.get("Gross Weight KG",0)), fmt_money(cargo_cbm(c)), fmt_money(cargo_vol_kg(c, mode)), ""])
+    rows.append(["", "", "", "", "Total CW", fmt_money(total_chargeable(cargo_lines, mode))])
+    return rows
+
+
+def make_pdf(enq, lines, totals_by_currency, total_aed, cargo_rows):
     buffer = BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=14*mm, leftMargin=14*mm, topMargin=12*mm, bottomMargin=12*mm)
     styles = getSampleStyleSheet()
@@ -147,6 +226,20 @@ def make_pdf(enq, lines, totals_by_currency, total_aed):
     ]))
     elements.append(details_tbl)
     elements.append(Spacer(1, 5*mm))
+
+    if cargo_rows and len(cargo_rows) > 1:
+        elements.append(Paragraph("Cargo Details", styles["MVNormal"]))
+        cargo_tbl = Table(cargo_rows, colWidths=[28*mm, 40*mm, 25*mm, 25*mm, 25*mm, 30*mm] if enq.get("mode") != "Sea" else [38*mm, 22*mm, 35*mm, 78*mm])
+        cargo_tbl.setStyle(TableStyle([
+            ("BACKGROUND", (0,0), (-1,0), colors.HexColor(PINK)),
+            ("TEXTCOLOR", (0,0), (-1,0), colors.white),
+            ("FONTNAME", (0,0), (-1,0), "Helvetica-Bold"),
+            ("GRID", (0,0), (-1,-1), 0.25, colors.lightgrey),
+            ("FONTSIZE", (0,0), (-1,-1), 8),
+            ("ALIGN", (0,1), (-1,-1), "CENTER"),
+        ]))
+        elements.append(cargo_tbl)
+        elements.append(Spacer(1, 5*mm))
 
     quote_data = [["Description", "Carrier", "Unit", "Unit Price", "VAT/Tax %", "Currency", "Total"]]
     for l in lines:
@@ -235,33 +328,64 @@ with c4:
     quote_date = st.date_input("Quote Date", value=date.today())
     validity = st.text_input("Rate Validity", value="15 Days")
 
+st.subheader("2. Cargo Details")
+st.caption("Use + Add cargo row for multiple packages/containers. AI extraction helps fill dimensions from email/PDF/TXT; please verify before quoting.")
+
+with st.expander("AI Cargo Extraction from email/PDF/document", expanded=False):
+    pasted = st.text_area("Paste customer email text here", height=120, placeholder="Paste email text with dimensions / weight here")
+    uploads = st.file_uploader("Upload PDF/TXT/CSV/email file", type=["pdf", "txt", "csv", "eml"], accept_multiple_files=True)
+    if st.button("Extract cargo details"):
+        combined = pasted or ""
+        for up in uploads or []:
+            combined += "\n" + extract_text_from_upload(up)
+        extracted = ai_extract_cargo_lines(combined)
+        if extracted:
+            st.session_state.cargo_lines = extracted
+            st.success(f"Extracted {len(extracted)} cargo row(s). Please verify dimensions and weight.")
+            st.rerun()
+        else:
+            st.warning("Could not detect dimensions. Try text like: 2 pcs 120x80x60 cm, gross weight 450 kg. For screenshots, please paste the visible text or enter manually.")
+
 if mode == "Sea":
-    st.subheader("2. Sea Cargo Details")
-    if st.button("+ Add cargo detail"):
-        st.session_state.cargo_lines.append({"Equipment": "20DV", "Qty": 1, "Gross Weight KG": 0.0, "Cargo Details": ""})
+    if st.button("+ Add cargo row"):
+        st.session_state.sea_cargo_lines.append({"Equipment": "20DV", "Qty": 1, "Gross Weight KG": 0.0, "Cargo Details": ""})
+        st.rerun()
     equipment_options = ["20DV", "40STD", "40HC", "40RF", "40 FR"]
-    for i, cargo in enumerate(st.session_state.cargo_lines):
-        cc1, cc2, cc3, cc4 = st.columns([1.1, .7, 1, 2.2])
+    st.markdown("**Equipment &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; Qty &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; Gross Weight KG &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; Cargo Details**")
+    for i, cargo in enumerate(st.session_state.sea_cargo_lines):
+        cc1, cc2, cc3, cc4 = st.columns([1, .6, 1, 3])
         with cc1:
-            cargo["Equipment"] = st.selectbox("Equipment", equipment_options, index=equipment_options.index(cargo.get("Equipment", "20DV")) if cargo.get("Equipment") in equipment_options else 0, key=f"eq_{i}")
+            cargo["Equipment"] = st.selectbox("Equipment", equipment_options, index=equipment_options.index(cargo.get("Equipment", "20DV")) if cargo.get("Equipment") in equipment_options else 0, key=f"eq_{i}", label_visibility="collapsed")
         with cc2:
-            cargo["Qty"] = st.number_input("Qty", min_value=1, value=int(cargo.get("Qty", 1)), step=1, key=f"qty_{i}")
+            cargo["Qty"] = st.number_input("Qty", min_value=1, value=int(cargo.get("Qty", 1)), step=1, key=f"qty_{i}", label_visibility="collapsed")
         with cc3:
-            cargo["Gross Weight KG"] = st.number_input("Gross Weight KG", min_value=0.0, value=float(cargo.get("Gross Weight KG", 0.0)), step=100.0, key=f"gw_{i}")
+            cargo["Gross Weight KG"] = st.number_input("Gross Weight KG", min_value=0.0, value=float(cargo.get("Gross Weight KG", 0.0)), step=100.0, key=f"gw_sea_{i}", label_visibility="collapsed")
         with cc4:
-            cargo["Cargo Details"] = st.text_input("Cargo Details", value=cargo.get("Cargo Details", ""), key=f"cd_{i}")
+            cargo["Cargo Details"] = st.text_input("Cargo Details", value=cargo.get("Cargo Details", ""), key=f"cd_sea_{i}", label_visibility="collapsed", placeholder="Commodity / remarks")
 else:
-    st.subheader("2. Cargo Details")
-    c1, c2, c3, c4 = st.columns(4)
-    with c1:
-        pieces = st.number_input("Pieces", min_value=0, value=1, step=1)
-    with c2:
-        gross_weight = st.number_input("Gross Weight KG", min_value=0.0, value=0.0, step=1.0)
-    with c3:
-        cbm = st.number_input("CBM", min_value=0.0, value=0.0, step=0.01)
-    with c4:
-        chargeable = max(gross_weight, cbm * 167 if mode == "Air" else cbm * 200)
-        st.metric("Chargeable Weight", f"{chargeable:,.2f} KG")
+    if st.button("+ Add cargo row"):
+        st.session_state.cargo_lines.append({"Pieces": 1, "Length CM": 0.0, "Width CM": 0.0, "Height CM": 0.0, "Gross Weight KG": 0.0, "Cargo Details": ""})
+        st.rerun()
+    st.markdown("**Pieces &nbsp;&nbsp;&nbsp; Length CM &nbsp;&nbsp;&nbsp; Width CM &nbsp;&nbsp;&nbsp; Height CM &nbsp;&nbsp;&nbsp; Gross KG &nbsp;&nbsp;&nbsp; CBM &nbsp;&nbsp;&nbsp; Vol KG &nbsp;&nbsp;&nbsp; Details**")
+    for i, cargo in enumerate(st.session_state.cargo_lines):
+        c1, c2, c3, c4, c5, c6, c7, c8 = st.columns([.7, .9, .9, .9, 1, .8, .8, 2])
+        with c1:
+            cargo["Pieces"] = st.number_input("Pieces", min_value=0, value=int(cargo.get("Pieces", 1)), step=1, key=f"pcs_{i}", label_visibility="collapsed")
+        with c2:
+            cargo["Length CM"] = st.number_input("Length CM", min_value=0.0, value=float(cargo.get("Length CM", 0.0)), step=1.0, key=f"len_{i}", label_visibility="collapsed")
+        with c3:
+            cargo["Width CM"] = st.number_input("Width CM", min_value=0.0, value=float(cargo.get("Width CM", 0.0)), step=1.0, key=f"wid_{i}", label_visibility="collapsed")
+        with c4:
+            cargo["Height CM"] = st.number_input("Height CM", min_value=0.0, value=float(cargo.get("Height CM", 0.0)), step=1.0, key=f"hei_{i}", label_visibility="collapsed")
+        with c5:
+            cargo["Gross Weight KG"] = st.number_input("Gross Weight KG", min_value=0.0, value=float(cargo.get("Gross Weight KG", 0.0)), step=1.0, key=f"gw_{i}", label_visibility="collapsed")
+        with c6:
+            st.text_input("CBM", value=fmt_money(cargo_cbm(cargo)), disabled=True, key=f"cbm_{i}", label_visibility="collapsed")
+        with c7:
+            st.text_input("Vol KG", value=fmt_money(cargo_vol_kg(cargo, mode)), disabled=True, key=f"vol_{i}", label_visibility="collapsed")
+        with c8:
+            cargo["Cargo Details"] = st.text_input("Details", value=cargo.get("Cargo Details", ""), key=f"cd_{i}", label_visibility="collapsed", placeholder="Commodity / remarks")
+    st.metric("Total Chargeable Weight", f"{total_chargeable(st.session_state.cargo_lines, mode):,.2f} KG")
 
 st.subheader("3. Manual Quote Lines")
 st.caption("Use Tab to move field-by-field: Description → Carrier → Unit → Unit Price → VAT/Tax → Currency → next row. No Enter button required.")
@@ -330,6 +454,11 @@ if totals_by_currency:
 st.subheader("5. Prepared Quote Text")
 terms = st.text_area("Terms & Conditions", value="Rates are subject to space/equipment availability and final carrier confirmation.\nDuties/taxes, inspections, demurrage/detention, storage, and destination charges are excluded unless specifically mentioned.", height=90)
 quote_lines_text = "\n".join([f"- {l.get('Description','')}: {l.get('Currency','AED')} {fmt_money(line_total(l))}" for l in st.session_state.quote_lines if str(l.get("Description", "")).strip() or float(l.get("Unit Price", 0) or 0) > 0])
+if mode == "Sea":
+    cargo_text = "\n".join([f"- {c.get('Qty',1)} x {c.get('Equipment','')} | Gross Weight: {fmt_money(c.get('Gross Weight KG',0))} KG | {c.get('Cargo Details','')}" for c in st.session_state.sea_cargo_lines])
+else:
+    cargo_text = "\n".join([f"- {c.get('Pieces',1)} pcs | {fmt_money(c.get('Length CM',0))} x {fmt_money(c.get('Width CM',0))} x {fmt_money(c.get('Height CM',0))} cm | Gross: {fmt_money(c.get('Gross Weight KG',0))} KG | Vol: {fmt_money(cargo_vol_kg(c, mode))} KG" for c in st.session_state.cargo_lines])
+    cargo_text += f"\nChargeable Weight: {total_chargeable(st.session_state.cargo_lines, mode):,.2f} KG"
 quote_text = f"""Dear Customer,
 
 Thank you for your enquiry.
@@ -343,6 +472,9 @@ Service Term: {service}
 Origin: {origin}
 Destination: {destination}
 Validity: {validity}
+
+Cargo Details:
+{cargo_text}
 
 Charges:
 {quote_lines_text}
@@ -359,5 +491,6 @@ Marvento Shipping LLC
 st.text_area("Copy Quote Text", value=quote_text, height=320)
 
 enq = {"quote_no": quote_no, "quote_date": str(quote_date), "customer": customer, "validity": validity, "mode": mode, "service": service, "origin": origin, "destination": destination, "terms": terms}
-pdf_bytes = make_pdf(enq, st.session_state.quote_lines, totals_by_currency, total_aed)
+cargo_rows = cargo_summary_table(mode, st.session_state.cargo_lines, st.session_state.sea_cargo_lines)
+pdf_bytes = make_pdf(enq, st.session_state.quote_lines, totals_by_currency, total_aed, cargo_rows)
 st.download_button("Download PDF Quotation", data=pdf_bytes, file_name=f"{quote_no}_Marvento_Quotation.pdf", mime="application/pdf")
