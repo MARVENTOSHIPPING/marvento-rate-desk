@@ -1,6 +1,7 @@
 import base64
+import json
 import re
-from datetime import date
+from datetime import date, datetime
 from io import BytesIO
 from pathlib import Path
 
@@ -20,6 +21,8 @@ from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, 
 APP_USER = "kiran.dxb@marventoshipping.com"
 APP_PASS = "ChangeMe123"
 LOGO_FILE = Path(__file__).parent / "marvento_logo.png"
+SAVED_QUOTES_DIR = Path(__file__).parent / "saved_quotes"
+SAVED_QUOTES_DIR.mkdir(exist_ok=True)
 
 MARVENTO = {
     "name": "MARVENTO SHIPPING LLC",
@@ -42,6 +45,53 @@ def image_to_base64(path: Path) -> str:
     if not path.exists():
         return ""
     return base64.b64encode(path.read_bytes()).decode("utf-8")
+
+
+
+
+def safe_filename(value: str) -> str:
+    value = value or "quote"
+    value = re.sub(r"[^A-Za-z0-9._-]+", "_", value).strip("_")
+    return value[:80] or "quote"
+
+
+def save_quote_pdf(enq, pdf_bytes, total_aed, totals_by_currency):
+    quote_no = safe_filename(enq.get("quote_no", "quote"))
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    pdf_name = f"{quote_no}_{stamp}_Marvento_Quotation.pdf"
+    meta_name = f"{quote_no}_{stamp}_metadata.json"
+    pdf_path = SAVED_QUOTES_DIR / pdf_name
+    meta_path = SAVED_QUOTES_DIR / meta_name
+    pdf_path.write_bytes(pdf_bytes)
+    metadata = {
+        "quote_no": enq.get("quote_no", ""),
+        "customer": enq.get("customer", ""),
+        "mode": enq.get("mode", ""),
+        "origin": enq.get("origin", ""),
+        "destination": enq.get("destination", ""),
+        "validity": enq.get("validity", ""),
+        "quote_date": enq.get("quote_date", ""),
+        "saved_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "total_aed": float(total_aed or 0),
+        "currency_totals": totals_by_currency,
+        "pdf_file": pdf_name,
+    }
+    meta_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+    return pdf_path
+
+
+def list_saved_quotes():
+    rows = []
+    for meta_path in sorted(SAVED_QUOTES_DIR.glob("*_metadata.json"), reverse=True):
+        try:
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+            pdf_path = SAVED_QUOTES_DIR / meta.get("pdf_file", "")
+            if pdf_path.exists():
+                meta["_pdf_path"] = str(pdf_path)
+                rows.append(meta)
+        except Exception:
+            pass
+    return rows
 
 
 def header():
@@ -495,4 +545,38 @@ st.text_area("Copy Quote Text", value=quote_text, height=320)
 enq = {"quote_no": quote_no, "quote_date": str(quote_date), "customer": customer, "validity": validity, "mode": mode, "service": service, "origin": origin, "destination": destination, "terms": terms}
 cargo_rows = cargo_summary_table(mode, st.session_state.cargo_lines, st.session_state.sea_cargo_lines)
 pdf_bytes = make_pdf(enq, st.session_state.quote_lines, totals_by_currency, total_aed, cargo_rows)
-st.download_button("Download PDF Quotation", data=pdf_bytes, file_name=f"{quote_no}_Marvento_Quotation.pdf", mime="application/pdf")
+dc1, dc2 = st.columns([1, 1])
+with dc1:
+    st.download_button("Download PDF Quotation", data=pdf_bytes, file_name=f"{quote_no}_Marvento_Quotation.pdf", mime="application/pdf")
+with dc2:
+    if st.button("Save Quote in App"):
+        saved_path = save_quote_pdf(enq, pdf_bytes, total_aed, totals_by_currency)
+        st.success(f"Quote saved: {saved_path.name}")
+
+st.subheader("6. Saved Quotations")
+saved_quotes = list_saved_quotes()
+if not saved_quotes:
+    st.info("No saved quotations yet. Click 'Save Quote in App' after preparing a quote.")
+else:
+    search = st.text_input("Search saved quotes", placeholder="Quote no / customer / origin / destination")
+    filtered = saved_quotes
+    if search.strip():
+        q = search.strip().lower()
+        filtered = [x for x in saved_quotes if q in json.dumps(x).lower()]
+    st.caption("Saved quotation PDFs are stored in this Streamlit app workspace. Download copies for long-term records.")
+    for idx, item in enumerate(filtered[:50]):
+        cols = st.columns([1.2, 1.7, 1.2, 1.2, 1, 1.1])
+        with cols[0]:
+            st.write(item.get("quote_no", ""))
+        with cols[1]:
+            st.write(item.get("customer", ""))
+        with cols[2]:
+            st.write(f"{item.get('origin','')} → {item.get('destination','')}")
+        with cols[3]:
+            st.write(item.get("saved_at", ""))
+        with cols[4]:
+            st.write(f"AED {float(item.get('total_aed', 0)):,.2f}")
+        with cols[5]:
+            pdf_path = Path(item.get("_pdf_path", ""))
+            if pdf_path.exists():
+                st.download_button("Download", data=pdf_path.read_bytes(), file_name=pdf_path.name, mime="application/pdf", key=f"saved_dl_{idx}")
