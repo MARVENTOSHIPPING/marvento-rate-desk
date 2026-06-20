@@ -24,6 +24,8 @@ st.markdown(
     .marvento-title {font-size:30px; font-weight:800; color:#0B2E5F; margin:0;}
     .marvento-sub {font-size:14px; color:#355; margin-top:4px;}
     .metric-box {padding:14px; border-radius:10px; background:#f5f8fb; border:1px solid #e6eef5;}
+    div[data-testid="stHorizontalBlock"] div[data-testid="stColumn"] {min-width: 0;}
+    .small-row-label {font-size:12px; font-weight:700; color:#0B2E5F; margin-bottom:-8px;}
     </style>
     """,
     unsafe_allow_html=True,
@@ -62,6 +64,41 @@ def calc_total(df: pd.DataFrame) -> pd.DataFrame:
         out[col] = pd.to_numeric(out[col], errors="coerce").fillna(0)
     out["Total"] = (out["Unit"] * out["Unit Price"]) + out["VAT/Tax"]
     return out
+
+
+def to_float(value):
+    try:
+        if value is None:
+            return 0.0
+        return float(str(value).replace(',', '').strip() or 0)
+    except Exception:
+        return 0.0
+
+
+def reset_quote_rows_currency(currency):
+    return [
+        {"Description": "Freight Charges", "Carrier": "", "Unit": "1", "Unit Price": "0", "VAT/Tax": "0", "Currency": currency},
+        {"Description": "Documentation", "Carrier": "", "Unit": "1", "Unit Price": "0", "VAT/Tax": "0", "Currency": currency},
+        {"Description": "", "Carrier": "", "Unit": "", "Unit Price": "", "VAT/Tax": "", "Currency": currency},
+    ]
+
+
+def rows_to_dataframe(rows):
+    clean = []
+    for row in rows:
+        unit = to_float(row.get("Unit"))
+        price = to_float(row.get("Unit Price"))
+        vat = to_float(row.get("VAT/Tax"))
+        clean.append({
+            "Description": str(row.get("Description", "")),
+            "Carrier": str(row.get("Carrier", "")),
+            "Unit": unit,
+            "Unit Price": price,
+            "VAT/Tax": vat,
+            "Currency": str(row.get("Currency", "AED") or "AED"),
+            "Total": (unit * price) + vat,
+        })
+    return pd.DataFrame(clean, columns=["Description", "Carrier", "Unit", "Unit Price", "VAT/Tax", "Currency", "Total"])
 
 
 def make_quote_text(enq, quote_df, total):
@@ -114,15 +151,18 @@ def create_pdf(enq, quote_df, total, quote_text):
     styles.add(ParagraphStyle(name="MarventoTitle", parent=styles["Title"], fontSize=20, textColor=BRAND_BLUE, alignment=0, spaceAfter=4))
     styles.add(ParagraphStyle(name="MarventoSub", parent=styles["Normal"], fontSize=9, textColor=BRAND_GREEN, alignment=0))
     story = []
-    logo_table = Table([[Paragraph("<b>MARVENTO</b>", styles["MarventoTitle"]), Paragraph("QUOTATION", styles["Title"])]], colWidths=[95*mm, 65*mm])
+    # Text logo placed top-left. This keeps the same clean Helvetica quotation style while
+    # restoring Marvento branding even when no image logo file is available.
+    logo_cell = Paragraph("<b><font color='#0B2E5F'>MARVENTO</font> <font color='#0E8F6E'>SHIPPING</font></b><br/><font size='8'>Shipping & Logistics</font>", styles["Normal"])
+    title_cell = Paragraph("<b>QUOTATION</b>", styles["Title"])
+    logo_table = Table([[logo_cell, title_cell]], colWidths=[105*mm, 65*mm])
     logo_table.setStyle(TableStyle([
-        ("TEXTCOLOR", (0,0), (0,0), BRAND_BLUE),
-        ("TEXTCOLOR", (1,0), (1,0), BRAND_BLUE),
         ("LINEBELOW", (0,0), (-1,-1), 1.5, BRAND_GREEN),
         ("VALIGN", (0,0), (-1,-1), "TOP"),
+        ("ALIGN", (1,0), (1,0), "RIGHT"),
+        ("BOTTOMPADDING", (0,0), (-1,-1), 8),
     ]))
     story.append(logo_table)
-    story.append(Paragraph("Shipping & Logistics", styles["MarventoSub"]))
     story.append(Spacer(1, 8*mm))
 
     info = [
@@ -267,38 +307,46 @@ else:
     st.metric("Calculated Chargeable Weight", f"{money(chargeable_weight)} KG")
 
 st.subheader("3. Manual Quote Lines")
-st.caption("Use Tab inside this table to move across the row and continue into the next row. Use the blank row at the bottom to add more lines.")
+st.caption("Manual quote is now simple entry boxes. Press Tab after each box to move across the same row, then automatically to the next row. No Enter key is required.")
 
-if "quote_rows" not in st.session_state:
-    st.session_state.quote_rows = pd.DataFrame([
-        {"Description": "Freight Charges", "Carrier": "", "Unit": 1.0, "Unit Price": 0.0, "VAT/Tax": 0.0, "Currency": currency_default, "Total": 0.0},
-        {"Description": "Documentation", "Carrier": "", "Unit": 1.0, "Unit Price": 0.0, "VAT/Tax": 0.0, "Currency": currency_default, "Total": 0.0},
-    ])
+if "quote_rows_manual" not in st.session_state:
+    st.session_state.quote_rows_manual = reset_quote_rows_currency(currency_default)
 
-edited_df = st.data_editor(
-    st.session_state.quote_rows,
-    num_rows="dynamic",
-    use_container_width=True,
-    hide_index=True,
-    column_order=["Description", "Carrier", "Unit", "Unit Price", "VAT/Tax", "Currency", "Total"],
-    disabled=["Total"],
-    column_config={
-        "Description": st.column_config.TextColumn("Description", width="large"),
-        "Carrier": st.column_config.TextColumn("Carrier", width="medium"),
-        "Unit": st.column_config.NumberColumn("Unit", min_value=0.0, step=1.0, format="%.2f"),
-        "Unit Price": st.column_config.NumberColumn("Unit Price", min_value=0.0, step=10.0, format="%.2f"),
-        "VAT/Tax": st.column_config.NumberColumn("VAT/Tax", min_value=0.0, step=1.0, format="%.2f"),
-        "Currency": st.column_config.SelectboxColumn("Currency", options=["AED", "USD", "EUR", "GBP", "INR"], required=True),
-        "Total": st.column_config.NumberColumn("Total", format="%.2f"),
-    },
-    key="quote_editor",
-)
-quote_df = calc_total(edited_df)
-st.session_state.quote_rows = quote_df
+btn1, btn2, btn3 = st.columns([1, 1, 5])
+with btn1:
+    if st.button("+ Add line", use_container_width=True):
+        st.session_state.quote_rows_manual.append({"Description": "", "Carrier": "", "Unit": "", "Unit Price": "", "VAT/Tax": "", "Currency": currency_default})
+        st.rerun()
+with btn2:
+    if st.button("Clear lines", use_container_width=True):
+        st.session_state.quote_rows_manual = reset_quote_rows_currency(currency_default)
+        st.rerun()
 
-# display calculated table again for totals clarity
-st.write("Calculated quote lines")
-st.dataframe(quote_df, use_container_width=True, hide_index=True)
+# Header row - compact so the full quote line is visible on one screen.
+hcols = st.columns([2.8, 1.7, 0.8, 1.1, 0.9, 0.8, 1.1])
+headers = ["Description", "Carrier", "Unit", "Unit Price", "VAT/Tax", "Currency", "Total"]
+for col, head in zip(hcols, headers):
+    col.markdown(f"<div class='small-row-label'>{head}</div>", unsafe_allow_html=True)
+
+currency_options = ["AED", "USD", "EUR", "GBP", "INR"]
+updated_rows = []
+for i, row in enumerate(st.session_state.quote_rows_manual):
+    cols = st.columns([2.8, 1.7, 0.8, 1.1, 0.9, 0.8, 1.1])
+    desc = cols[0].text_input("Description", value=str(row.get("Description", "")), key=f"desc_{i}", label_visibility="collapsed", placeholder="Freight")
+    carrier = cols[1].text_input("Carrier", value=str(row.get("Carrier", "")), key=f"carrier_{i}", label_visibility="collapsed", placeholder="Carrier")
+    unit = cols[2].text_input("Unit", value=str(row.get("Unit", "")), key=f"unit_{i}", label_visibility="collapsed", placeholder="1")
+    unit_price = cols[3].text_input("Unit Price", value=str(row.get("Unit Price", "")), key=f"price_{i}", label_visibility="collapsed", placeholder="0")
+    vat = cols[4].text_input("VAT/Tax", value=str(row.get("VAT/Tax", "")), key=f"vat_{i}", label_visibility="collapsed", placeholder="0")
+    cur_current = str(row.get("Currency", currency_default) or currency_default)
+    cur_index = currency_options.index(cur_current) if cur_current in currency_options else 0
+    cur = cols[5].selectbox("Currency", options=currency_options, index=cur_index, key=f"cur_{i}", label_visibility="collapsed")
+    line_total = (to_float(unit) * to_float(unit_price)) + to_float(vat)
+    cols[6].text_input("Total", value=money(line_total), key=f"total_{i}", label_visibility="collapsed", disabled=True)
+    updated_rows.append({"Description": desc, "Carrier": carrier, "Unit": unit, "Unit Price": unit_price, "VAT/Tax": vat, "Currency": cur})
+
+st.session_state.quote_rows_manual = updated_rows
+quote_df = rows_to_dataframe(updated_rows)
+quote_df = quote_df[quote_df["Description"].astype(str).str.strip() != ""].reset_index(drop=True)
 
 total_aed = float(quote_df.loc[quote_df["Currency"].fillna("AED").eq("AED"), "Total"].sum())
 non_aed = quote_df.loc[~quote_df["Currency"].fillna("AED").eq("AED")]
