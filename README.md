@@ -1,37 +1,15 @@
-# Marvento Rate Desk App
+# Marvento Rate Desk App V3
 
-First working web app for Marvento rate desk quoting.
-
-## Login
-
-Default login for first test:
-
-- Username: `kiran.dxb@marventoshipping.com`
-- Password: `ChangeMe123`
-
-Important: I cannot access your ChatGPT password. To use the same username/password you personally use, change the app secrets in Streamlit Cloud:
-
-```toml
-APP_USERNAME = "your username"
-APP_PASSWORD = "your password"
-```
-
-## Easiest deployment: Streamlit Cloud
-
-1. Unzip this folder.
-2. Upload all files to a GitHub repository.
-3. Go to Streamlit Cloud.
-4. Create a new app.
-5. Select the repository.
-6. Main file path: `app.py`.
-7. Add secrets:
-
-```toml
-APP_USERNAME = "kiran.dxb@marventoshipping.com"
-APP_PASSWORD = "your chosen password"
-```
-
-8. Deploy.
+New in V3:
+- Saves uploaded tariff files into an app tariff database.
+- Supports multiple CSV, Excel and PDF tariff uploads.
+- Air mode shows AOL/AOD. Sea mode shows POL/POD.
+- Service terms: EXW, FCA, FOB, CIF, CPT, DAP, DDU, DDP.
+- Rate validity field.
+- Auto quote option with rate selection.
+- Manual quote table with Description, Carrier, Unit, Unit Price, VAT/Tax, Currency, Total.
+- Prepared quote text reflects selected/entered values.
+- PDF quote download with Marvento branding.
 
 ## Run locally
 
@@ -40,30 +18,19 @@ pip install -r requirements.txt
 streamlit run app.py
 ```
 
-## Features
+## Login
 
-- Login screen
-- Enter enquiry details
-- Extract dimensions/weight from pasted email text, PDF, CSV, Excel, TXT, EML and image files where OCR is available
-- Manual dimension and CBM entry
-- Chargeable weight for Air, Courier, Land and Sea
-- Import one or many real tariff rates by CSV/Excel/PDF
-- Download tariff CSV template inside the app
-- Match tariffs by mode, origin and destination
-- Rank rates by lowest total AED cost
-- Calculate margin and selling quote
-- Prepare quote text and download as TXT
+Default username: `kiran.dxb@marventoshipping.com`
+Default password: `ChangeMe123`
 
-## Tariff columns
+Change these in Streamlit secrets before sharing.
 
-Use the in-app template. Columns:
+## Tariff upload
+
+Click **Save uploaded tariff files** after choosing one or many tariff files.
+
+Recommended tariff columns:
 
 vendor, mode, origin, destination, service, currency, min_charge, rate_per_kg, rate_per_cbm, rate_per_container, doc_fee, fuel_pct, other_charges, transit_days, valid_from, valid_to, remarks
 
-
-## New in this version
-
-- Multiple tariff uploads are supported.
-- Tariff upload accepts CSV, XLSX, XLS and PDF.
-- PDF tariff extraction works best when the PDF contains selectable text/table data. Scanned image PDFs may not extract cleanly.
-- Manual quote entry is available with these columns: Description, Carrier, Unit, Unit Price, VAT/Tax, Currency and Total.
+PDF support is best-effort and works best when the PDF has actual tables, not scanned images.
