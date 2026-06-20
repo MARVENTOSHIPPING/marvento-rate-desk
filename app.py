@@ -32,15 +32,15 @@ AIR_DIVISOR=6000; COURIER_DIVISOR=5000; LAND_DIVISOR=3333; SEA_KG_PER_CBM=1000
 INCOTERMS=['EXW','FCA','FOB','CIF','CPT','DAP','DDU','DDP']
 CURRENCIES=['AED','USD','EUR','GBP','SAR','INR']
 EQUIPMENT=['20DV','40STD','40HC','40RF','40 FR']
-TARIFF_COLUMNS=['vendor','mode','origin','destination','equipment','service','currency','min_charge','rate_per_kg','rate_per_cbm','rate_per_container','doc_fee','fuel_pct','other_charges','transit_days','valid_from','valid_to','remarks','source_text']
+TARIFF_COLUMNS=['vendor','mode','origin','destination','equipment','service','currency','min_charge','rate_per_kg','rate_per_cbm','rate_per_container','doc_fee','fuel_pct','other_charges','transit_days','valid_from','valid_to','remarks','surcharge_details','source_text']
 NUM_COLS=['min_charge','rate_per_kg','rate_per_cbm','rate_per_container','doc_fee','fuel_pct','other_charges','transit_days']
 
 SAMPLE_TARIFFS=pd.DataFrame([
- ['SkyLine Air','Air','DXB','RUH','', 'EXW','AED',180,4.2,0,0,35,12,50,2,'2026-01-01','2026-12-31','Air general cargo',''],
- ['Gulf Courier','Courier','Dubai','Riyadh','', 'DDP','AED',95,5.1,0,0,25,18,35,3,'2026-01-01','2026-12-31','Express courier',''],
- ['Desert Road','Land','Dubai','Dammam','', 'DAP','AED',250,0.8,90,0,40,0,80,4,'2026-01-01','2026-12-31','LTL road',''],
- ['Ocean Box','Sea','Jebel Ali','Mombasa','20DV','FOB','AED',0,0,0,4200,150,0,250,18,'2026-01-01','2026-12-31','20DV base',''],
- ['Ocean Box','Sea','Jebel Ali','Mombasa','40HC','CIF','AED',0,0,0,6200,150,0,250,18,'2026-01-01','2026-12-31','40HC base',''],
+ ['SkyLine Air','Air','DXB','RUH','', 'EXW','AED',180,4.2,0,0,35,12,50,2,'2026-01-01','2026-12-31','Air general cargo','',''],
+ ['Gulf Courier','Courier','Dubai','Riyadh','', 'DDP','AED',95,5.1,0,0,25,18,35,3,'2026-01-01','2026-12-31','Express courier','',''],
+ ['Desert Road','Land','Dubai','Dammam','', 'DAP','AED',250,0.8,90,0,40,0,80,4,'2026-01-01','2026-12-31','LTL road','',''],
+ ['Ocean Box','Sea','Jebel Ali','Mombasa','20DV','FOB','AED',0,0,0,4200,150,0,250,18,'2026-01-01','2026-12-31','20DV base','',''],
+ ['Ocean Box','Sea','Jebel Ali','Mombasa','40HC','CIF','AED',0,0,0,6200,150,0,250,18,'2026-01-01','2026-12-31','40HC base','',''],
 ],columns=TARIFF_COLUMNS)
 
 def get_secret(name, default):
@@ -154,6 +154,44 @@ def _detect_currency_from_row(row):
     if re.search(r'\bINR\b', blob, re.I): return 'INR'
     return 'AED'
 
+def _carrier_from_row(row, source_name=''):
+    # Try common carrier/airline/line labels from mapped columns and raw text.
+    for key in ['vendor','carrier','airline','shipping_line','line','agent','vendor_name']:
+        try:
+            val=str(row.get(key,'')).strip()
+            if val and val.lower() not in ('nan','none','0'):
+                return val[:60]
+        except Exception:
+            pass
+    blob=' '.join(str(v) for v in getattr(row, 'values', []))
+    m=re.search(r'(?:carrier|airline|shipping line|line|vendor)\s*[:\-]\s*([A-Za-z0-9 .&/-]{2,60})', blob, re.I)
+    if m:
+        return m.group(1).strip()[:60]
+    return os.path.splitext(source_name)[0][:60] if source_name else ''
+
+def _is_rate_or_identity_col(c):
+    base=set(TARIFF_COLUMNS) | {'rank','match_reason','buying_total_aed','usable_rate_total_test'}
+    aliases={'20dv','20dc','20gp','20','40std','40st','40dc','40gp','40','40hc','40hq','40rf','40fr','origin','destination','pol','pod','aol','aod','from','to','carrier','airline','line','shipping_line','mode','service','currency','validity','valid_from','valid_to','remarks','source_text'}
+    return normkey(c) in {normkey(x) for x in base|aliases}
+
+def _collect_extra_surcharges(row, raw_columns):
+    total=0.0; parts=[]
+    for c in raw_columns:
+        if _is_rate_or_identity_col(c):
+            continue
+        val=_num(row.get(c,0))
+        if val>0:
+            label=str(c).replace('_',' ').strip()
+            total += val
+            parts.append(f'{label}: {val:g}')
+    return total, '; '.join(parts)
+
+def _best_carrier(value, fallback=''):
+    v=str(value or '').strip()
+    if v and v.lower() not in ('nan','none','0'):
+        return v
+    return str(fallback or 'TBA')
+
 def clean_tariff(df):
     """Map almost any CSV/Excel/PDF table into the internal tariff format.
     Also handles wide sea tariffs with columns like 20DV, 40HC, 40RF etc.
@@ -182,8 +220,14 @@ def clean_tariff(df):
                 rate=_num(r.get(c,0))
                 if rate>0:
                     d={col:'' for col in TARIFF_COLUMNS}
-                    for col in ['vendor','mode','origin','destination','service','currency','min_charge','doc_fee','fuel_pct','other_charges','transit_days','valid_from','valid_to','remarks','source_text']:
+                    for col in ['vendor','mode','origin','destination','service','currency','min_charge','doc_fee','fuel_pct','other_charges','transit_days','valid_from','valid_to','remarks','surcharge_details','source_text']:
                         if col in raw.columns: d[col]=r.get(col,'')
+                    if not d.get('vendor'):
+                        d['vendor']=_carrier_from_row(r)
+                    extra_total, extra_details=_collect_extra_surcharges(r, raw.columns)
+                    if extra_total:
+                        d['other_charges']=_num(d.get('other_charges',0)) + extra_total
+                        d['surcharge_details']=extra_details
                     d['equipment']=eq; d['rate_per_container']=rate
                     d['currency']=d.get('currency') or _detect_currency_from_row(r)
                     d['mode']=d.get('mode') or 'Sea'
@@ -193,6 +237,12 @@ def clean_tariff(df):
         d={col:(0 if col in NUM_COLS else '') for col in TARIFF_COLUMNS}
         for col in raw.columns:
             if col in TARIFF_COLUMNS: d[col]=r.get(col,'')
+        if not d.get('vendor'):
+            d['vendor']=_carrier_from_row(r)
+        extra_total, extra_details=_collect_extra_surcharges(r, raw.columns)
+        if extra_total:
+            d['other_charges']=_num(d.get('other_charges',0)) + extra_total
+            d['surcharge_details']=extra_details
         # Detect equipment if embedded in remarks/rate basis.
         blob=' '.join(str(v) for v in r.values)
         if not d.get('equipment'):
@@ -354,17 +404,30 @@ def parse_dimensions_and_weight(text):
     return pd.DataFrame(rows), {'gross_kg':max(weights) if weights else 0.0,'cbm':float(cbms[-1]) if cbms else round(sum(r['cbm'] for r in rows),4),'pieces':sum(r['pieces'] for r in rows) if rows else 0}
 
 
-def rate_total(row, chargeable_kg, cbm, containers):
+def rate_breakdown(row, chargeable_kg, cbm, containers):
     min_charge=float(row.get('min_charge',0) or 0)
-    freight_candidates=[]
-    if min_charge>0: freight_candidates.append(min_charge)
-    if float(row.get('rate_per_kg',0) or 0)>0: freight_candidates.append(float(row.rate_per_kg)*float(chargeable_kg or 0))
-    if float(row.get('rate_per_cbm',0) or 0)>0: freight_candidates.append(float(row.rate_per_cbm)*float(cbm or 0))
-    if float(row.get('rate_per_container',0) or 0)>0: freight_candidates.append(float(row.rate_per_container)*max(int(containers or 0),1))
-    if not freight_candidates: return 0.0
-    freight=max(freight_candidates)
+    candidates=[]
+    if min_charge>0: candidates.append(('Minimum', min_charge))
+    if float(row.get('rate_per_kg',0) or 0)>0: candidates.append(('Freight / KG', float(row.get('rate_per_kg',0))*float(chargeable_kg or 0)))
+    if float(row.get('rate_per_cbm',0) or 0)>0: candidates.append(('Freight / CBM', float(row.get('rate_per_cbm',0))*float(cbm or 0)))
+    if float(row.get('rate_per_container',0) or 0)>0: candidates.append(('Ocean Freight / Container', float(row.get('rate_per_container',0))*max(int(containers or 0),1)))
+    if not candidates:
+        return {'freight':0.0,'fuel':0.0,'doc_fee':0.0,'other_charges':0.0,'total':0.0,'basis':'No rate','details':'No rate'}
+    basis, freight=max(candidates, key=lambda x:x[1])
     fuel=freight*float(row.get('fuel_pct',0) or 0)/100
-    return round(freight+fuel+float(row.get('doc_fee',0) or 0)+float(row.get('other_charges',0) or 0),2)
+    doc=float(row.get('doc_fee',0) or 0)
+    other=float(row.get('other_charges',0) or 0)
+    total=round(freight+fuel+doc+other,2)
+    details=[f'{basis}: {freight:,.2f}']
+    if fuel: details.append(f'Fuel {float(row.get("fuel_pct",0) or 0):g}%: {fuel:,.2f}')
+    if doc: details.append(f'Doc Fee: {doc:,.2f}')
+    if other: details.append(f'Surcharges/Other: {other:,.2f}')
+    sd=str(row.get('surcharge_details','')).strip()
+    if sd: details.append(f'Included surcharges: {sd}')
+    return {'freight':round(freight,2),'fuel':round(fuel,2),'doc_fee':round(doc,2),'other_charges':round(other,2),'total':total,'basis':basis,'details':' | '.join(details)}
+
+def rate_total(row, chargeable_kg, cbm, containers):
+    return rate_breakdown(row, chargeable_kg, cbm, containers)['total']
 
 def row_score(r, mode, origin, dest, service, equipment):
     score=0; reasons=[]
@@ -397,6 +460,8 @@ def match_rates(tariffs, mode, origin, dest, chargeable_kg, cbm, containers, ser
     df['_score']=[x[0] for x in scores]
     df['match_reason']=[x[1] for x in scores]
     df['buying_total_aed']=df.apply(lambda r: rate_total(r,chargeable_kg,cbm,containers),axis=1)
+    df['rate_breakdown']=df.apply(lambda r: rate_breakdown(r,chargeable_kg,cbm,containers).get('details',''),axis=1)
+    df['carrier']=df.apply(lambda r: _best_carrier(r.get('vendor',''), r.get('remarks','')), axis=1)
     # First exact/strong matches, then intelligent fallback by mode/equipment/rate.
     out=df[(df['_score']>=60) & (df['buying_total_aed']>0)].copy()
     if out.empty:
@@ -430,7 +495,12 @@ def total_quote(df):
     q=calculate_manual_totals(df)
     return float(q['Total'].sum()) if not q.empty else 0.0
 def build_auto_quote_lines(sel, selling):
-    return pd.DataFrame([{'Description':f"Freight Charges - {sel.get('service','') or sel.get('equipment','')}",'Carrier':str(sel.get('vendor','')),'Unit':'Shipment','Unit Price':float(selling),'VAT/Tax':0.0,'Currency':str(sel.get('currency','AED') or 'AED'),'Total':float(selling)}])
+    desc=f"Freight Charges - {sel.get('service','') or sel.get('equipment','') or sel.get('mode','')}"
+    rb=str(sel.get('rate_breakdown','')).strip()
+    if rb:
+        desc += f" ({rb})"
+    carrier=_best_carrier(sel.get('vendor',''), sel.get('carrier',''))
+    return pd.DataFrame([{'Description':desc,'Carrier':carrier,'Unit':'Shipment','Unit Price':float(selling),'VAT/Tax':0.0,'Currency':str(sel.get('currency','AED') or 'AED'),'Total':float(selling)}])
 def make_quote_text(enq, lines, total, validity):
     q=calculate_manual_totals(lines); items=[]
     for _,r in q.iterrows():
@@ -503,8 +573,8 @@ with st.sidebar:
         if os.path.exists(TARIFF_STORE): os.remove(TARIFF_STORE)
         st.warning('Saved tariffs cleared.'); st.rerun()
 
-st.title('Marvento Rate Desk V5')
-st.caption('Improved AI tariff extraction, visible match diagnostics, sea equipment quote, and PDF quotation')
+st.title('Marvento Rate Desk V6')
+st.caption('V6: carrier display fixed and sea surcharge columns included in total calculation')
 tariffs=active_tariffs()
 tab1,tab2,tab3=st.tabs(['Rate Desk','Tariff Table','Help'])
 with tab1:
@@ -574,7 +644,7 @@ with tab1:
         else:
             st.success(f'{len(ranked)} matching tariff option(s) found.')
             st.dataframe(ranked, use_container_width=True)
-            idx=st.selectbox('Select rate option for quote', list(ranked.index), format_func=lambda i: f"Rank {int(ranked.loc[i,'rank'])} | {ranked.loc[i,'vendor']} | {ranked.loc[i,'equipment'] or ranked.loc[i,'service']} | Buying {ranked.loc[i,'currency']} {float(ranked.loc[i,'buying_total_aed']):,.2f}")
+            idx=st.selectbox('Select rate option for quote', list(ranked.index), format_func=lambda i: f"Rank {int(ranked.loc[i,'rank'])} | {ranked.loc[i,'carrier'] if 'carrier' in ranked.columns else ranked.loc[i,'vendor']} | {ranked.loc[i,'equipment'] or ranked.loc[i,'service']} | Buying {ranked.loc[i,'currency']} {float(ranked.loc[i,'buying_total_aed']):,.2f}")
             best=ranked.loc[idx]; buying=float(best['buying_total_aed']); selling=round(buying*(1+margin_pct/100),2) if method=='% Markup on Buying' else round(buying+fixed_margin,2)
             final_lines=build_auto_quote_lines(best,selling); final_total=total_quote(final_lines); ma=selling-buying
             a,b,c,d=st.columns(4); a.metric('Buying Cost',f"{best.get('currency','AED')} {buying:,.2f}"); b.metric('Total Selling Quote',f"{best.get('currency','AED')} {final_total:,.2f}"); c.metric('Margin',f"{best.get('currency','AED')} {ma:,.2f}"); d.metric('Margin on Selling',f'{(ma/selling*100 if selling else 0):.2f}%')
@@ -594,7 +664,7 @@ with tab1:
     else: st.error('PDF package not installed. Ensure reportlab is in requirements.txt.')
 with tab2:
     st.subheader('Active Tariff Table')
-    st.caption('V5 shows imported/mapped tariff rows. For Sea, usable rates must have Equipment and rate_per_container. For Air/Courier, usable rates must have rate_per_kg.')
+    st.caption('V6 shows imported/mapped tariff rows. For Sea, usable rates must have Equipment and rate_per_container. Numeric surcharge columns from uploaded Excel/CSV are added into other_charges and shown in remarks.')
     tview=clean_tariff(tariffs).copy()
     if not tview.empty:
         tview['usable_rate_total_test']=tview.apply(lambda r: rate_total(r,100,1,1), axis=1)
@@ -604,10 +674,10 @@ with tab2:
     if c1.button('Save tariff table changes'): save_tariffs(edited); st.success('Tariff table saved.'); st.rerun()
     c2.download_button('Download active tariff table', clean_tariff(edited).to_csv(index=False), 'active_marvento_tariffs.csv','text/csv')
 with tab3:
-    st.subheader('How to use V5')
+    st.subheader('How to use V6')
     st.markdown('''
 1. Upload multiple CSV, Excel, or PDF tariff files on the left, then click **Save uploaded tariff files**.
-2. V5 reads CSV, all Excel sheets, PDF tables, and PDF text. It also tries to detect wide sea columns like 20DV / 40HC / 40RF.
+2. V6 reads CSV, all Excel sheets, PDF tables, and PDF text. It also tries to detect wide sea columns like 20DV / 40HC / 40RF.
 3. Auto quote now shows match diagnostics and fallback options if the lane text is different, so you can see why a rate was or was not selected.
 4. For Sea mode, only **Gross Weight** and **Equipment** cargo details are shown. Use **＋ Add further cargo details** for more container/cargo lines.
 5. Manual quote total is calculated automatically and shown in quote text and PDF.

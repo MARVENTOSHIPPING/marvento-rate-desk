@@ -1,34 +1,41 @@
-# Marvento Rate Desk V5
+# Marvento Rate Desk V6
 
-This version improves tariff fetching and makes matching transparent.
+Updates in V6:
 
-## Added / Fixed
-- Stronger AI-style tariff extraction from CSV, all Excel sheets, PDF tables, and PDF text.
-- Supports sea equipment columns like `20DV`, `20DC`, `20GP`, `40STD`, `40GP`, `40HC`, `40HQ`, `40RF`, `40FR`.
-- Auto Quote now ranks by mode, lane, equipment, source text, and rate presence.
-- If no exact lane match is found, it shows fallback rate options instead of silently showing zero.
-- Diagnostic table shows match score, match reason, and calculated buying amount.
-- Manual quote totals and PDF quote totals are retained.
-- PDF quote keeps Marvento logo top-left if logo is uploaded.
+- Air auto quote now displays the carrier/airline clearly.
+- Sea auto quote now adds numeric surcharge columns from the same uploaded Excel/CSV row into the total buying cost.
+- Surcharge details are shown in the `rate_breakdown` / `surcharge_details` columns.
+- Auto quote selection shows carrier, equipment/service and buying total.
+- PDF quote and prepared quote text include the selected carrier and final selling amount.
 
-## Important tariff columns
-For best results, use these columns in CSV/Excel:
+## Important for Sea tariff Excel
 
-`vendor, mode, origin, destination, equipment, service, currency, min_charge, rate_per_kg, rate_per_cbm, rate_per_container, doc_fee, fuel_pct, other_charges, transit_days, valid_from, valid_to, remarks`
+For best results, keep one row per lane/equipment with columns like:
 
-For Sea FCL:
-- `mode` = Sea
-- `origin` = POL
-- `destination` = POD
-- `equipment` = 20DV / 40STD / 40HC / 40RF / 40 FR
-- `rate_per_container` = buying ocean freight per container
+- Carrier / Shipping Line
+- Mode
+- POL
+- POD
+- Equipment
+- Ocean Freight or rate_per_container
+- Currency
+- BAF
+- CAF
+- THC
+- ISPS
+- Seal
+- VGM
+- Documentation
+- Any other surcharge columns
 
-For Air/Courier:
-- `mode` = Air or Courier
-- `origin` = AOL
-- `destination` = AOD
-- `rate_per_kg` = buying rate per chargeable kg
-- `min_charge` optional
+V6 will add the numeric surcharge columns into `other_charges` and include them in buying cost.
 
-## Deploy
-Upload `app.py`, `requirements.txt`, and `README.md` to GitHub. Streamlit will redeploy automatically.
+## Upload to Streamlit
+
+Upload these files to GitHub:
+
+- app.py
+- requirements.txt
+- README.md
+
+Then Streamlit will redeploy automatically.
