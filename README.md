@@ -1,36 +1,25 @@
-# Marvento Rate Desk App V3
+# Marvento Rate Desk V4
 
-New in V3:
-- Saves uploaded tariff files into an app tariff database.
-- Supports multiple CSV, Excel and PDF tariff uploads.
-- Air mode shows AOL/AOD. Sea mode shows POL/POD.
-- Service terms: EXW, FCA, FOB, CIF, CPT, DAP, DDU, DDP.
-- Rate validity field.
-- Auto quote option with rate selection.
-- Manual quote table with Description, Carrier, Unit, Unit Price, VAT/Tax, Currency, Total.
-- Prepared quote text reflects selected/entered values.
-- PDF quote download with Marvento branding.
+Changes included:
+- AI-assisted PDF/text tariff extraction and better auto quote matching.
+- Sea mode shows POL/POD, equipment dropdown: 20DV, 40STD, 40HC, 40RF, 40 FR.
+- Sea mode shows gross weight and equipment cargo details only, with a plus button for extra cargo lines.
+- Manual quote total is calculated and reflected in quote text/PDF.
+- Auto quote lets you select matched tariff options.
+- PDF quote supports Marvento logo upload on left top and Marvento-style blue/orange colours.
 
-## Run locally
-
+Run:
 ```bash
 pip install -r requirements.txt
 streamlit run app.py
 ```
 
-## Login
+Default login:
+- Username: kiran.dxb@marventoshipping.com
+- Password: ChangeMe123
 
-Default username: `kiran.dxb@marventoshipping.com`
-Default password: `ChangeMe123`
-
-Change these in Streamlit secrets before sharing.
-
-## Tariff upload
-
-Click **Save uploaded tariff files** after choosing one or many tariff files.
-
-Recommended tariff columns:
-
-vendor, mode, origin, destination, service, currency, min_charge, rate_per_kg, rate_per_cbm, rate_per_container, doc_fee, fuel_pct, other_charges, transit_days, valid_from, valid_to, remarks
-
-PDF support is best-effort and works best when the PDF has actual tables, not scanned images.
+For Streamlit Cloud, change credentials in Secrets:
+```
+APP_USERNAME="your_username"
+APP_PASSWORD="your_password"
+```
