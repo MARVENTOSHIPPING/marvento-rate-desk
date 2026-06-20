@@ -60,16 +60,40 @@ if not st.session_state.logged_in:
             else: st.error('Wrong username or password')
     st.stop()
 
-def normalize(x): return str(x or '').strip().lower()
+
+def normalize(x):
+    return str(x or '').strip().lower()
+
+def normkey(x):
+    """Strong normalisation used for lane/equipment matching."""
+    s=normalize(x)
+    repl={
+        'jebel ali':'jebelali','jebelali':'jebelali','jebel ali port':'jebelali',
+        'dubai':'dubai','dxb':'dxb','mombasa':'mombasa','riyadh':'riyadh','ruh':'ruh',
+        '40 std':'40std','40st':'40std','40 gp':'40std','40gp':'40std','40dc':'40std',
+        '20 dc':'20dv','20gp':'20dv','20 gp':'20dv','20 ft':'20dv','20ft':'20dv',
+        '40 hq':'40hc','40hq':'40hc','40 high cube':'40hc','40hc':'40hc',
+        '40 rf':'40rf','40reefer':'40rf','40 reefer':'40rf',
+        '40 fr':'40fr','40 flat rack':'40fr','40fr':'40fr'
+    }
+    for k,v in repl.items():
+        s=s.replace(k,v)
+    return re.sub(r'[^a-z0-9]+','',s)
+
 def tokens(x): return re.findall(r'[a-z0-9]+', normalize(x))
+
 def contains_match(value, query):
     v=normalize(value); q=normalize(query)
     if not q: return True
     if not v: return False
+    vk=normkey(v); qk=normkey(q)
+    if qk and (qk in vk or vk in qk): return True
     if q in v or v in q: return True
     qt=set(tokens(q)); vt=set(tokens(v))
     return bool(qt and vt and (qt & vt))
+
 def cbm_from_cm(l,w,h,p): return (float(l)*float(w)*float(h)*int(p))/1000000 if l and w and h and p else 0.0
+
 def chargeable_weight(mode,gross,cbm):
     m=normalize(mode)
     if m=='sea': return round(float(gross or 0),2)
@@ -96,48 +120,141 @@ def extract_text_from_upload(file):
         except Exception as e: return f'Excel extraction failed: {e}'
     return data.decode('utf-8', errors='ignore')
 
-def clean_tariff(df):
-    df=df.copy(); df.columns=[str(c).strip().lower().replace(' ','_').replace('/','_') for c in df.columns]
-    aliases={'carrier':'vendor','agent':'vendor','shipping_line':'vendor','airline':'vendor','aol':'origin','airport_of_loading':'origin','aod':'destination','airport_of_discharge':'destination','pol':'origin','pod':'destination','from':'origin','to':'destination','origin_port':'origin','destination_port':'destination','origin_airport':'origin','destination_airport':'destination','eqp':'equipment','container':'equipment','container_type':'equipment','cntr':'equipment','tt':'transit_days','transit_time':'transit_days','validity_from':'valid_from','validity_to':'valid_to','valid_until':'valid_to','rate_kg':'rate_per_kg','per_kg':'rate_per_kg','kg_rate':'rate_per_kg','rate_cbm':'rate_per_cbm','per_cbm':'rate_per_cbm','cbm_rate':'rate_per_cbm','container_rate':'rate_per_container','rate_container':'rate_per_container','rate_20ft':'rate_per_container','rate_40ft':'rate_per_container','of':'rate_per_container','ocean_freight':'rate_per_container','minimum':'min_charge','minimum_charge':'min_charge','min':'min_charge','fuel':'fuel_pct','fuel_surcharge':'fuel_pct','doc':'doc_fee','documentation':'doc_fee','charges':'other_charges','other':'other_charges','remarks_notes':'remarks'}
+def _standardize_columns(df):
+    df=df.copy()
+    df.columns=[str(c).strip().lower().replace('\n','_').replace(' ','_').replace('/','_').replace('-','_') for c in df.columns]
+    aliases={
+        'carrier':'vendor','agent':'vendor','shipping_line':'vendor','line':'vendor','airline':'vendor','vendor_name':'vendor',
+        'aol':'origin','airport_of_loading':'origin','pol':'origin','port_of_loading':'origin','from':'origin','origin_port':'origin','origin_airport':'origin','load_port':'origin','pickup':'origin',
+        'aod':'destination','airport_of_discharge':'destination','pod':'destination','port_of_discharge':'destination','to':'destination','destination_port':'destination','destination_airport':'destination','discharge_port':'destination','delivery':'destination',
+        'eqp':'equipment','equip':'equipment','equipment_type':'equipment','container':'equipment','container_type':'equipment','cntr':'equipment','container_size':'equipment',
+        'incoterm':'service','terms':'service','service_required':'service','tt':'transit_days','transit_time':'transit_days','validity_from':'valid_from','validity_to':'valid_to','valid_until':'valid_to','validity':'valid_to',
+        'rate_kg':'rate_per_kg','per_kg':'rate_per_kg','kg_rate':'rate_per_kg','airfreight':'rate_per_kg','air_freight':'rate_per_kg','rate_cbm':'rate_per_cbm','per_cbm':'rate_per_cbm','cbm_rate':'rate_per_cbm',
+        'container_rate':'rate_per_container','rate_container':'rate_per_container','of':'rate_per_container','ocean_freight':'rate_per_container','freight':'rate_per_container',
+        'minimum':'min_charge','minimum_charge':'min_charge','min':'min_charge','m_min':'min_charge','fuel':'fuel_pct','fuel_surcharge':'fuel_pct','fsc':'fuel_pct','doc':'doc_fee','documentation':'doc_fee','doc_fee':'doc_fee','charges':'other_charges','other':'other_charges','local_charges':'other_charges','remarks_notes':'remarks'
+    }
     df=df.rename(columns={k:v for k,v in aliases.items() if k in df.columns})
+    return df
+
+def _num(x):
+    try:
+        if pd.isna(x): return 0.0
+        s=str(x).replace(',','')
+        m=re.search(r'-?\d+(?:\.\d+)?', s)
+        return float(m.group(0)) if m else 0.0
+    except Exception:
+        return 0.0
+
+def _detect_currency_from_row(row):
+    blob=' '.join(str(v) for v in row.values)
+    if re.search(r'\bUSD\b|US\$', blob, re.I): return 'USD'
+    if re.search(r'\bEUR\b', blob, re.I): return 'EUR'
+    if re.search(r'\bGBP\b', blob, re.I): return 'GBP'
+    if re.search(r'\bSAR\b', blob, re.I): return 'SAR'
+    if re.search(r'\bINR\b', blob, re.I): return 'INR'
+    return 'AED'
+
+def clean_tariff(df):
+    """Map almost any CSV/Excel/PDF table into the internal tariff format.
+    Also handles wide sea tariffs with columns like 20DV, 40HC, 40RF etc.
+    """
+    if df is None or df.empty:
+        return pd.DataFrame(columns=TARIFF_COLUMNS)
+    raw=_standardize_columns(df)
+    rows=[]
+    equipment_aliases={
+        '20dv':['20dv','20_dc','20dc','20gp','20_ft','20ft','20'],
+        '40std':['40std','40_st','40std','40_gp','40gp','40_dc','40dc','40_ft','40ft','40'],
+        '40hc':['40hc','40_hc','40hq','40_hq','40_high_cube'],
+        '40rf':['40rf','40_rf','40_reefer','reefer_40'],
+        '40 FR':['40fr','40_fr','40_flat_rack','flat_rack_40']
+    }
+    eq_cols=[]
+    for eq, names in equipment_aliases.items():
+        for c in raw.columns:
+            if normkey(c) in {normkey(n) for n in names}:
+                eq_cols.append((eq,c))
+    # If sea tariff is wide, create one row per equipment column.
+    if eq_cols:
+        base=raw.copy()
+        for _,r in base.iterrows():
+            for eq,c in eq_cols:
+                rate=_num(r.get(c,0))
+                if rate>0:
+                    d={col:'' for col in TARIFF_COLUMNS}
+                    for col in ['vendor','mode','origin','destination','service','currency','min_charge','doc_fee','fuel_pct','other_charges','transit_days','valid_from','valid_to','remarks','source_text']:
+                        if col in raw.columns: d[col]=r.get(col,'')
+                    d['equipment']=eq; d['rate_per_container']=rate
+                    d['currency']=d.get('currency') or _detect_currency_from_row(r)
+                    d['mode']=d.get('mode') or 'Sea'
+                    rows.append(d)
+    # Standard rows.
+    for _,r in raw.iterrows():
+        d={col:(0 if col in NUM_COLS else '') for col in TARIFF_COLUMNS}
+        for col in raw.columns:
+            if col in TARIFF_COLUMNS: d[col]=r.get(col,'')
+        # Detect equipment if embedded in remarks/rate basis.
+        blob=' '.join(str(v) for v in r.values)
+        if not d.get('equipment'):
+            for eq in EQUIPMENT:
+                if contains_match(blob, eq): d['equipment']=eq; break
+        if not d.get('mode'):
+            d['mode']='Sea' if d.get('equipment') or re.search(r'\b(POL|POD|vessel|ocean|sea)\b', blob, re.I) else 'Air' if re.search(r'\b(AOL|AOD|airport|air|kg|kgs)\b', blob, re.I) else ''
+        if not d.get('currency'): d['currency']=_detect_currency_from_row(r)
+        # When a generic rate column was mapped as container but mode is air and no kg rate, switch.
+        for c in NUM_COLS: d[c]=_num(d.get(c,0))
+        if normalize(d.get('mode')) in ('air','courier') and d.get('rate_per_container',0)>0 and d.get('rate_per_kg',0)==0:
+            d['rate_per_kg']=d['rate_per_container']; d['rate_per_container']=0
+        rows.append(d)
+    out=pd.DataFrame(rows)
     for c in TARIFF_COLUMNS:
-        if c not in df.columns: df[c]=0 if c in NUM_COLS else ''
-    for c in NUM_COLS: df[c]=pd.to_numeric(df[c], errors='coerce').fillna(0)
-    for c in [x for x in TARIFF_COLUMNS if x not in NUM_COLS]: df[c]=df[c].fillna('').astype(str)
-    df['currency']=df['currency'].replace('', 'AED')
-    return df[TARIFF_COLUMNS]
+        if c not in out.columns: out[c]=0 if c in NUM_COLS else ''
+    for c in NUM_COLS: out[c]=pd.to_numeric(out[c], errors='coerce').fillna(0)
+    for c in [x for x in TARIFF_COLUMNS if x not in NUM_COLS]: out[c]=out[c].fillna('').astype(str)
+    out['currency']=out['currency'].replace('', 'AED')
+    # Remove rows with no useful rate only if they have no source_text; keep source_text rows for AI fallback/debug.
+    return out[TARIFF_COLUMNS]
 
 def infer_tariff_from_text(text, source_name):
-    lines=[x.strip() for x in text.splitlines() if x.strip()]
+    """Best-effort AI-style extraction from tariff text/PDF/email.
+    It extracts lanes, equipment rates, kg rates, minimum/doc/fuel, and stores source_text for fallback matching.
+    """
+    lines=[x.strip() for x in str(text or '').splitlines() if x.strip()]
     full='\n'.join(lines)
     rows=[]
-    mode='Sea' if re.search(r'\b(POL|POD|20DV|40HC|40STD|40RF|ocean|vessel|sea)\b', full, re.I) else 'Air' if re.search(r'\b(AOL|AOD|air|airport|airline|kgs?)\b', full, re.I) else ''
-    curr='USD' if re.search(r'\bUSD\b|\$',full,re.I) else 'AED' if re.search(r'\bAED\b',full,re.I) else 'AED'
-    vendors=re.findall(r'(?:carrier|airline|line|vendor)\s*[:\-]\s*([A-Za-z0-9 .&-]+)', full, re.I)
+    mode='Sea' if re.search(r'\b(POL|POD|20DV|20DC|20GP|40HC|40HQ|40STD|40GP|40RF|40FR|ocean|vessel|sea)\b', full, re.I) else 'Air' if re.search(r'\b(AOL|AOD|air|airport|airline|kgs?|/kg|per kg)\b', full, re.I) else ''
+    curr='USD' if re.search(r'\bUSD\b|US\$|\$',full,re.I) else 'EUR' if re.search(r'\bEUR\b',full,re.I) else 'AED' if re.search(r'\bAED\b',full,re.I) else 'AED'
+    vendors=re.findall(r'(?:carrier|airline|line|vendor|shipping line)\s*[:\-]\s*([A-Za-z0-9 .&-]+)', full, re.I)
     vendor=(vendors[0].strip()[:40] if vendors else os.path.splitext(source_name)[0][:40])
-    # Try lane patterns: origin to destination, POL/POD, AOL/AOD
     lanes=[]
-    for pat in [r'(?:POL|AOL|Origin|From)\s*[:\-]\s*([A-Za-z0-9 .,-]+?)\s+(?:POD|AOD|Destination|To)\s*[:\-]\s*([A-Za-z0-9 .,-]+)', r'([A-Z][A-Za-z .]{2,30})\s+(?:to|-)\s+([A-Z][A-Za-z .]{2,30})']:
+    patterns=[
+        r'(?:POL|AOL|Origin|From)\s*[:\-]?\s*([A-Za-z0-9 .,-]{2,40}?)\s+(?:POD|AOD|Destination|Dest|To)\s*[:\-]?\s*([A-Za-z0-9 .,-]{2,40})',
+        r'([A-Za-z][A-Za-z .]{2,30})\s+(?:to|TO|\-|–|>)\s+([A-Za-z][A-Za-z .]{2,30})',
+        r'([A-Z]{3})\s*[-/]\s*([A-Z]{3})'
+    ]
+    for pat in patterns:
         for a,b in re.findall(pat, full, re.I):
-            lanes.append((a.strip(' ,'), b.strip(' ,')))
+            a=a.strip(' ,:;|'); b=b.strip(' ,:;|')
+            if a and b and len(a)<45 and len(b)<45: lanes.append((a,b))
     if not lanes: lanes=[('','')]
-    # Sea equipment rates
+    eq_patterns={'20DV':r'20\s*(?:DV|DC|GP|FT)?','40STD':r'40\s*(?:STD|ST|DC|GP|FT)?','40HC':r'40\s*(?:HC|HQ|HIGH\s*CUBE)','40RF':r'40\s*(?:RF|REEFER)','40 FR':r'40\s*(?:FR|FLAT\s*RACK)'}
     eq_rates=[]
-    for eq in EQUIPMENT:
-        eq_re=eq.replace(' ','\s*')
-        for m in re.finditer(eq_re+r'[^0-9]{0,30}(\d{2,7}(?:\.\d+)?)', full, re.I):
-            eq_rates.append((eq,float(m.group(1))))
-    # Air/courier kg rate
+    for eq,pat in eq_patterns.items():
+        for m in re.finditer(pat+r'[^0-9]{0,40}(\d{2,7}(?:\.\d+)?)', full, re.I):
+            val=float(m.group(1));
+            if 50 <= val <= 999999: eq_rates.append((eq,val))
     kg_rates=[]
-    for m in re.finditer(r'(?:rate|freight|airfreight|per kg|/kg)[^0-9]{0,20}(\d+(?:\.\d+)?)', full, re.I):
+    for m in re.finditer(r'(?:rate|freight|airfreight|air freight|per kg|/kg|kg rate)[^0-9]{0,30}(\d+(?:\.\d+)?)', full, re.I):
         val=float(m.group(1))
-        if val<1000: kg_rates.append(val)
-    if not kg_rates:
-        for m in re.finditer(r'(\d+(?:\.\d+)?)\s*(?:/\s*kg|per\s*kg|kg)', full, re.I):
-            val=float(m.group(1))
-            if val<1000: kg_rates.append(val)
-    min_charge=0
-    mm=re.search(r'(?:min|minimum)[^0-9]{0,20}(\d+(?:\.\d+)?)', full, re.I)
+        if 0 < val < 1000: kg_rates.append(val)
+    for m in re.finditer(r'(\d+(?:\.\d+)?)\s*(?:/\s*kg|per\s*kg)', full, re.I):
+        val=float(m.group(1))
+        if 0 < val < 1000: kg_rates.append(val)
+    cbm_rates=[]
+    for m in re.finditer(r'(?:cbm|w/m|rt|revenue ton)[^0-9]{0,30}(\d+(?:\.\d+)?)|(\d+(?:\.\d+)?)\s*(?:/\s*cbm|per\s*cbm|w/m)', full, re.I):
+        val=float(m.group(1) or m.group(2))
+        if 0 < val < 10000: cbm_rates.append(val)
+    min_charge=0; mm=re.search(r'(?:min|minimum)[^0-9]{0,20}(\d+(?:\.\d+)?)', full, re.I)
     if mm: min_charge=float(mm.group(1))
     doc=0; dm=re.search(r'(?:doc|documentation)[^0-9]{0,20}(\d+(?:\.\d+)?)', full, re.I)
     if dm: doc=float(dm.group(1))
@@ -146,20 +263,37 @@ def infer_tariff_from_text(text, source_name):
     service=''
     for inc in INCOTERMS:
         if re.search(r'\b'+inc+r'\b', full, re.I): service=inc; break
-    for origin,dest in lanes[:20]:
+    for origin,dest in lanes[:30]:
         if eq_rates:
             for eq,rate in eq_rates:
-                rows.append({'vendor':vendor,'mode':'Sea','origin':origin,'destination':dest,'equipment':eq,'service':service,'currency':curr,'min_charge':0,'rate_per_kg':0,'rate_per_cbm':0,'rate_per_container':rate,'doc_fee':doc,'fuel_pct':fuel,'other_charges':0,'transit_days':0,'valid_from':'','valid_to':'','remarks':'AI extracted from tariff text','source_text':full[:3000]})
-        elif kg_rates:
-            for rate in kg_rates[:5]:
-                rows.append({'vendor':vendor,'mode':mode or 'Air','origin':origin,'destination':dest,'equipment':'','service':service,'currency':curr,'min_charge':min_charge,'rate_per_kg':rate,'rate_per_cbm':0,'rate_per_container':0,'doc_fee':doc,'fuel_pct':fuel,'other_charges':0,'transit_days':0,'valid_from':'','valid_to':'','remarks':'AI extracted from tariff text','source_text':full[:3000]})
+                rows.append({'vendor':vendor,'mode':'Sea','origin':origin,'destination':dest,'equipment':eq,'service':service,'currency':curr,'min_charge':0,'rate_per_kg':0,'rate_per_cbm':0,'rate_per_container':rate,'doc_fee':doc,'fuel_pct':fuel,'other_charges':0,'transit_days':0,'valid_from':'','valid_to':'','remarks':'AI extracted from tariff text','source_text':full[:8000]})
+        if kg_rates:
+            for rate in sorted(set(kg_rates))[:10]:
+                rows.append({'vendor':vendor,'mode':mode or 'Air','origin':origin,'destination':dest,'equipment':'','service':service,'currency':curr,'min_charge':min_charge,'rate_per_kg':rate,'rate_per_cbm':0,'rate_per_container':0,'doc_fee':doc,'fuel_pct':fuel,'other_charges':0,'transit_days':0,'valid_from':'','valid_to':'','remarks':'AI extracted from tariff text','source_text':full[:8000]})
+        if cbm_rates and not eq_rates:
+            for rate in sorted(set(cbm_rates))[:10]:
+                rows.append({'vendor':vendor,'mode':mode or 'Land','origin':origin,'destination':dest,'equipment':'','service':service,'currency':curr,'min_charge':min_charge,'rate_per_kg':0,'rate_per_cbm':rate,'rate_per_container':0,'doc_fee':doc,'fuel_pct':fuel,'other_charges':0,'transit_days':0,'valid_from':'','valid_to':'','remarks':'AI extracted CBM/W-M rate from tariff text','source_text':full[:8000]})
+    if not rows and full.strip():
+        rows.append({'vendor':vendor,'mode':mode,'origin':'','destination':'','equipment':'','service':service,'currency':curr,'min_charge':0,'rate_per_kg':0,'rate_per_cbm':0,'rate_per_container':0,'doc_fee':0,'fuel_pct':0,'other_charges':0,'transit_days':0,'valid_from':'','valid_to':'','remarks':'Text stored for tariff debug; no rate confidently extracted','source_text':full[:8000]})
     return pd.DataFrame(rows)
 
 def read_tariff_file(file):
     name=file.name.lower(); data=file.getvalue()
     try:
-        if name.endswith('.csv'): return pd.read_csv(io.BytesIO(data)), ''
-        if name.endswith(('.xlsx','.xls')): return pd.read_excel(io.BytesIO(data)), ''
+        if name.endswith('.csv'):
+            raw=pd.read_csv(io.BytesIO(data))
+            text=raw.astype(str).to_csv(index=False)
+            inferred=infer_tariff_from_text(text, file.name)
+            return pd.concat([raw, inferred], ignore_index=True, sort=False), 'CSV read and AI scan completed.'
+        if name.endswith(('.xlsx','.xls')):
+            sheets=pd.read_excel(io.BytesIO(data), sheet_name=None)
+            frames=[]; text_parts=[]
+            for sheet,df in sheets.items():
+                df=df.copy(); df['remarks']=df.get('remarks','').astype(str) + f' Sheet: {sheet}' if 'remarks' in df.columns else f'Sheet: {sheet}'
+                frames.append(df); text_parts.append(f'Sheet {sheet}\n'+df.astype(str).to_csv(index=False))
+            raw=pd.concat(frames, ignore_index=True, sort=False) if frames else pd.DataFrame()
+            inferred=infer_tariff_from_text('\n'.join(text_parts), file.name)
+            return pd.concat([raw, inferred], ignore_index=True, sort=False), 'Excel all sheets read and AI scan completed.'
         if name.endswith('.pdf'):
             if pdfplumber is None: return pd.DataFrame(), 'PDF tariff reading needs pdfplumber.'
             frames=[]; texts=[]
@@ -171,15 +305,12 @@ def read_tariff_file(file):
                             frames.append(pd.DataFrame(table[1:], columns=header))
                     texts.append(page.extract_text() or '')
             text='\n'.join(texts)
-            if frames:
-                tab=pd.concat(frames, ignore_index=True)
-                inferred=infer_tariff_from_text(text, file.name)
-                if not inferred.empty: return pd.concat([tab, inferred], ignore_index=True, sort=False), 'PDF table + AI text extraction completed.'
-                return tab, 'PDF table extraction completed.'
             inferred=infer_tariff_from_text(text, file.name)
-            if not inferred.empty: return inferred, 'AI extracted tariff rates from PDF text.'
-            if text.strip(): return pd.DataFrame([{'vendor':os.path.splitext(file.name)[0],'mode':'','origin':'','destination':'','currency':'AED','remarks':'PDF text extracted; could not confidently map rates','source_text':text[:3000]}]), 'PDF text stored. Use Tariff Table to complete columns.'
-            return pd.DataFrame(), 'No readable PDF text/table. It may be scanned.'
+            all_frames=frames + ([inferred] if not inferred.empty else [])
+            if all_frames:
+                return pd.concat(all_frames, ignore_index=True, sort=False), 'PDF table/text AI scan completed.'
+            if text.strip(): return pd.DataFrame([{'vendor':os.path.splitext(file.name)[0],'mode':'','origin':'','destination':'','currency':'AED','remarks':'PDF text extracted; no rate confidently extracted','source_text':text[:8000]}]), 'PDF text stored for review.'
+            return pd.DataFrame(), 'No readable PDF text/table. It may be scanned/image PDF.'
     except Exception as e: return pd.DataFrame(), f'Could not read {file.name}: {e}'
     return pd.DataFrame(), f'Unsupported file: {file.name}'
 
@@ -196,7 +327,11 @@ def add_uploaded_tariffs(files):
         if msg: msgs.append(f'{f.name}: {msg}')
         if raw is not None and not raw.empty:
             try:
-                cl=clean_tariff(raw); cl['remarks']=cl['remarks'].astype(str)+f' | Source: {f.name}'; frames.append(cl)
+                cl=clean_tariff(raw)
+                cl['remarks']=cl['remarks'].astype(str)+f' | Source: {f.name}'
+                frames.append(cl)
+                rated=cl[(cl[['rate_per_kg','rate_per_cbm','rate_per_container']].sum(axis=1)>0)]
+                msgs.append(f'{f.name}: mapped {len(cl)} row(s), {len(rated)} row(s) have usable rates.')
             except Exception as e: msgs.append(f'{f.name}: columns could not be mapped ({e})')
     if len(frames)>1:
         out=pd.concat(frames, ignore_index=True).drop_duplicates(keep='last')
@@ -205,7 +340,6 @@ def add_uploaded_tariffs(files):
 def active_tariffs():
     saved=load_saved_tariffs()
     return clean_tariff(SAMPLE_TARIFFS) if saved.empty else saved
-
 def parse_dimensions_and_weight(text):
     rows=[]; t=text.replace('×','x').replace('*','x')
     pat=re.compile(r'(?:(\d+)\s*(?:pcs?|pieces?|ctns?|cartons?)\s*[xX@-]?\s*)?(\d+(?:\.\d+)?)\s*[xX]\s*(\d+(?:\.\d+)?)\s*[xX]\s*(\d+(?:\.\d+)?)\s*(cm|mm|m|inch|in)?', re.I)
@@ -219,36 +353,68 @@ def parse_dimensions_and_weight(text):
     cbms=re.findall(r'(\d+(?:\.\d+)?)\s*(?:cbm|m3|cubic meter|cubic metres)\b', t, re.I)
     return pd.DataFrame(rows), {'gross_kg':max(weights) if weights else 0.0,'cbm':float(cbms[-1]) if cbms else round(sum(r['cbm'] for r in rows),4),'pieces':sum(r['pieces'] for r in rows) if rows else 0}
 
-def rate_total(row, chargeable_kg, cbm, containers):
-    opts=[float(row.get('min_charge',0) or 0)]
-    if float(row.get('rate_per_kg',0) or 0)>0: opts.append(float(row.rate_per_kg)*chargeable_kg)
-    if float(row.get('rate_per_cbm',0) or 0)>0: opts.append(float(row.rate_per_cbm)*cbm)
-    if float(row.get('rate_per_container',0) or 0)>0: opts.append(float(row.rate_per_container)*max(int(containers or 0),1))
-    freight=max(opts); fuel=freight*float(row.get('fuel_pct',0) or 0)/100
-    return round(freight+fuel+float(row.get('doc_fee',0) or 0)+float(row.get('other_charges',0) or 0),2)
-def row_score(r, mode, origin, dest, service, equipment):
-    score=0
-    if contains_match(r.get('mode',''), mode): score+=3
-    if contains_match(r.get('origin',''), origin): score+=4
-    if contains_match(r.get('destination',''), dest): score+=4
-    if service and contains_match(r.get('service',''), service): score+=1
-    if equipment and contains_match(r.get('equipment',''), equipment): score+=2
-    blob=' '.join(str(r.get(c,'')) for c in ['remarks','source_text','vendor'])
-    if contains_match(blob, origin): score+=1
-    if contains_match(blob, dest): score+=1
-    if equipment and contains_match(blob, equipment): score+=1
-    return score
-def match_rates(tariffs, mode, origin, dest, chargeable_kg, cbm, containers, service='', equipment=''):
-    df=tariffs.copy(); df['_score']=df.apply(lambda r: row_score(r,mode,origin,dest,service,equipment),axis=1)
-    out=df[df['_score']>=7].copy()
-    if out.empty: out=df[df['_score']>=4].copy()
-    if out.empty: return out.drop(columns=['_score'], errors='ignore')
-    out['buying_total_aed']=out.apply(lambda r: rate_total(r,chargeable_kg,cbm,containers),axis=1)
-    out=out[out['buying_total_aed']>0].copy()
-    if out.empty: return out
-    out=out.sort_values(['buying_total_aed','_score'], ascending=[True,False]).reset_index(drop=True)
-    out.insert(0,'rank',range(1,len(out)+1)); return out.drop(columns=['_score'], errors='ignore')
 
+def rate_total(row, chargeable_kg, cbm, containers):
+    min_charge=float(row.get('min_charge',0) or 0)
+    freight_candidates=[]
+    if min_charge>0: freight_candidates.append(min_charge)
+    if float(row.get('rate_per_kg',0) or 0)>0: freight_candidates.append(float(row.rate_per_kg)*float(chargeable_kg or 0))
+    if float(row.get('rate_per_cbm',0) or 0)>0: freight_candidates.append(float(row.rate_per_cbm)*float(cbm or 0))
+    if float(row.get('rate_per_container',0) or 0)>0: freight_candidates.append(float(row.rate_per_container)*max(int(containers or 0),1))
+    if not freight_candidates: return 0.0
+    freight=max(freight_candidates)
+    fuel=freight*float(row.get('fuel_pct',0) or 0)/100
+    return round(freight+fuel+float(row.get('doc_fee',0) or 0)+float(row.get('other_charges',0) or 0),2)
+
+def row_score(r, mode, origin, dest, service, equipment):
+    score=0; reasons=[]
+    blob=' '.join(str(r.get(c,'')) for c in ['vendor','mode','origin','destination','equipment','service','remarks','source_text'])
+    # Mode matching: blank mode is not rejected, but clear mode match gets priority.
+    if contains_match(r.get('mode',''), mode) or (mode=='Sea' and contains_match(blob,'sea')) or (mode!='Sea' and contains_match(blob, mode)):
+        score+=30; reasons.append('mode')
+    elif not str(r.get('mode','')).strip():
+        score+=8; reasons.append('mode blank')
+    # Lane matching can come from mapped origin/destination OR raw source text.
+    if contains_match(r.get('origin',''), origin): score+=35; reasons.append('origin')
+    elif origin and contains_match(blob, origin): score+=18; reasons.append('origin in text')
+    elif not str(r.get('origin','')).strip(): score+=5; reasons.append('origin blank')
+    if contains_match(r.get('destination',''), dest): score+=35; reasons.append('destination')
+    elif dest and contains_match(blob, dest): score+=18; reasons.append('destination in text')
+    elif not str(r.get('destination','')).strip(): score+=5; reasons.append('destination blank')
+    if service and contains_match(r.get('service',''), service): score+=5; reasons.append('service')
+    if equipment:
+        if contains_match(r.get('equipment',''), equipment): score+=25; reasons.append('equipment')
+        elif contains_match(blob, equipment): score+=12; reasons.append('equipment in text')
+    # Useful price present.
+    if any(float(r.get(c,0) or 0)>0 for c in ['rate_per_kg','rate_per_cbm','rate_per_container','min_charge']):
+        score+=10; reasons.append('rate present')
+    return score, ', '.join(reasons)
+
+def match_rates(tariffs, mode, origin, dest, chargeable_kg, cbm, containers, service='', equipment=''):
+    df=clean_tariff(tariffs).copy()
+    if df.empty: return df
+    scores=df.apply(lambda r: row_score(r,mode,origin,dest,service,equipment),axis=1)
+    df['_score']=[x[0] for x in scores]
+    df['match_reason']=[x[1] for x in scores]
+    df['buying_total_aed']=df.apply(lambda r: rate_total(r,chargeable_kg,cbm,containers),axis=1)
+    # First exact/strong matches, then intelligent fallback by mode/equipment/rate.
+    out=df[(df['_score']>=60) & (df['buying_total_aed']>0)].copy()
+    if out.empty:
+        out=df[(df['_score']>=40) & (df['buying_total_aed']>0)].copy()
+    if out.empty:
+        # Fallback: show any row with usable rate and same mode/equipment; this prevents silent zero when lane names differ.
+        fallback=df[df['buying_total_aed']>0].copy()
+        if mode:
+            fb_mode=fallback[fallback.apply(lambda r: contains_match(r.get('mode',''), mode) or contains_match(' '.join(str(r.get(c,'')) for c in ['remarks','source_text']), mode), axis=1)]
+            if not fb_mode.empty: fallback=fb_mode
+        if equipment and mode=='Sea':
+            fb_eq=fallback[fallback.apply(lambda r: contains_match(r.get('equipment',''), equipment) or contains_match(str(r.get('source_text','')), equipment), axis=1)]
+            if not fb_eq.empty: fallback=fb_eq
+        out=fallback.copy()
+    if out.empty: return out.drop(columns=['_score'], errors='ignore')
+    out=out.sort_values(['buying_total_aed','_score'], ascending=[True,False]).reset_index(drop=True)
+    out.insert(0,'rank',range(1,len(out)+1))
+    return out.drop(columns=['_score'], errors='ignore')
 def default_manual_quote_lines():
     return pd.DataFrame([{'Description':'Freight Charges','Carrier':'','Unit':'Shipment','Unit Price':0.0,'VAT/Tax':0.0,'Currency':'AED','Total':0.0}])
 def calculate_manual_totals(df):
@@ -337,8 +503,8 @@ with st.sidebar:
         if os.path.exists(TARIFF_STORE): os.remove(TARIFF_STORE)
         st.warning('Saved tariffs cleared.'); st.rerun()
 
-st.title('Marvento Rate Desk V4')
-st.caption('AI-assisted tariff reading, sea equipment quote, manual quote total, and PDF quotation')
+st.title('Marvento Rate Desk V5')
+st.caption('Improved AI tariff extraction, visible match diagnostics, sea equipment quote, and PDF quotation')
 tariffs=active_tariffs()
 tab1,tab2,tab3=st.tabs(['Rate Desk','Tariff Table','Help'])
 with tab1:
@@ -396,8 +562,15 @@ with tab1:
     if qsource.startswith('Auto'):
         ranked=match_rates(tariffs,mode,origin,dest,chargeable_kg,cbm,containers,service,equipment)
         if ranked.empty:
-            st.warning('No matching auto tariff found. Check lane/equipment names or open Tariff Table to complete extracted tariff rows.')
-            st.info('Tip: PDF tariffs are AI-read best-effort. Scanned PDFs may need manual correction in Tariff Table.')
+            st.warning('No matching auto tariff found.')
+            st.info('Below is a diagnostic view of imported tariff rows. Check that mode, origin, destination, equipment, and rate columns are mapped.')
+            dbg=clean_tariff(tariffs).copy()
+            if not dbg.empty:
+                tmp=dbg.apply(lambda r: row_score(r,mode,origin,dest,service,equipment),axis=1)
+                dbg['match_score']=[x[0] for x in tmp]; dbg['match_reason']=[x[1] for x in tmp]
+                dbg['calculated_buying']=dbg.apply(lambda r: rate_total(r,chargeable_kg,cbm,containers),axis=1)
+                st.dataframe(dbg.sort_values('match_score', ascending=False).head(25), use_container_width=True)
+            st.info('If rates are in PDF but not extracted, open Tariff Table and manually fill origin/destination/equipment/rate_per_container or rate_per_kg once, then Save tariff table changes.')
         else:
             st.success(f'{len(ranked)} matching tariff option(s) found.')
             st.dataframe(ranked, use_container_width=True)
@@ -408,8 +581,8 @@ with tab1:
             st.dataframe(final_lines, use_container_width=True)
     else:
         st.info('Total is calculated automatically as Unit Price + VAT/Tax for each line.')
-        if 'manual_quote_lines_v4' not in st.session_state: st.session_state.manual_quote_lines_v4=default_manual_quote_lines()
-        manual=st.data_editor(st.session_state.manual_quote_lines_v4, num_rows='dynamic', use_container_width=True, column_config={'Description':st.column_config.TextColumn('Description'),'Carrier':st.column_config.TextColumn('Carrier'),'Unit':st.column_config.TextColumn('Unit'),'Unit Price':st.column_config.NumberColumn('Unit Price', min_value=0.0, step=1.0),'VAT/Tax':st.column_config.NumberColumn('VAT/Tax', min_value=0.0, step=1.0),'Currency':st.column_config.SelectboxColumn('Currency', options=CURRENCIES),'Total':st.column_config.NumberColumn('Total', disabled=True)}, key='manual_editor_v4')
+        if 'manual_quote_lines_v5' not in st.session_state: st.session_state.manual_quote_lines_v5=default_manual_quote_lines()
+        manual=st.data_editor(st.session_state.manual_quote_lines_v5, num_rows='dynamic', use_container_width=True, column_config={'Description':st.column_config.TextColumn('Description'),'Carrier':st.column_config.TextColumn('Carrier'),'Unit':st.column_config.TextColumn('Unit'),'Unit Price':st.column_config.NumberColumn('Unit Price', min_value=0.0, step=1.0),'VAT/Tax':st.column_config.NumberColumn('VAT/Tax', min_value=0.0, step=1.0),'Currency':st.column_config.SelectboxColumn('Currency', options=CURRENCIES),'Total':st.column_config.NumberColumn('Total', disabled=True)}, key='manual_editor_v5')
         final_lines=calculate_manual_totals(manual); final_total=total_quote(final_lines)
         st.dataframe(final_lines, use_container_width=True); st.metric('Total Selling Quote', f"{final_lines['Currency'].iloc[0] if not final_lines.empty else 'AED'} {final_total:,.2f}")
     st.subheader('5. Prepared Quote Text and PDF')
@@ -421,17 +594,21 @@ with tab1:
     else: st.error('PDF package not installed. Ensure reportlab is in requirements.txt.')
 with tab2:
     st.subheader('Active Tariff Table')
-    st.caption('PDF/AI extracted rows may need small manual corrections here before auto quote can match perfectly.')
-    edited=st.data_editor(tariffs, num_rows='dynamic', use_container_width=True, key='tariff_editor_v4')
+    st.caption('V5 shows imported/mapped tariff rows. For Sea, usable rates must have Equipment and rate_per_container. For Air/Courier, usable rates must have rate_per_kg.')
+    tview=clean_tariff(tariffs).copy()
+    if not tview.empty:
+        tview['usable_rate_total_test']=tview.apply(lambda r: rate_total(r,100,1,1), axis=1)
+        st.info(f'Active tariff rows: {len(tview)} | Rows with usable rate: {(tview["usable_rate_total_test"]>0).sum()}')
+    edited=st.data_editor(tariffs, num_rows='dynamic', use_container_width=True, key='tariff_editor_v5')
     c1,c2=st.columns(2)
     if c1.button('Save tariff table changes'): save_tariffs(edited); st.success('Tariff table saved.'); st.rerun()
     c2.download_button('Download active tariff table', clean_tariff(edited).to_csv(index=False), 'active_marvento_tariffs.csv','text/csv')
 with tab3:
-    st.subheader('How to use V4')
+    st.subheader('How to use V5')
     st.markdown('''
 1. Upload multiple CSV, Excel, or PDF tariff files on the left, then click **Save uploaded tariff files**.
-2. PDF tariff reading uses best-effort AI-style text extraction. For scanned PDFs or complex layouts, check the **Tariff Table** and correct columns.
-3. Auto quote now scores tariff rows by mode, lane, service, equipment, and extracted source text.
+2. V5 reads CSV, all Excel sheets, PDF tables, and PDF text. It also tries to detect wide sea columns like 20DV / 40HC / 40RF.
+3. Auto quote now shows match diagnostics and fallback options if the lane text is different, so you can see why a rate was or was not selected.
 4. For Sea mode, only **Gross Weight** and **Equipment** cargo details are shown. Use **＋ Add further cargo details** for more container/cargo lines.
 5. Manual quote total is calculated automatically and shown in quote text and PDF.
 6. Upload Marvento logo in the left menu to place it at the top-left of the PDF quotation.
