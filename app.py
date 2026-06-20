@@ -3,7 +3,7 @@ import re
 import math
 import hashlib
 from datetime import date, datetime
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Optional
 
 import pandas as pd
 import streamlit as st
@@ -132,6 +132,114 @@ def extract_text_from_upload(file) -> str:
     return data.decode("utf-8", errors="ignore")
 
 
+
+def read_tariff_file(file) -> Tuple[pd.DataFrame, str]:
+    """Read CSV, Excel or PDF tariff upload. PDF support is best-effort for text/table PDFs."""
+    name = file.name.lower()
+    data = file.getvalue()
+    try:
+        if name.endswith('.csv'):
+            return pd.read_csv(io.BytesIO(data)), ''
+        if name.endswith(('.xlsx', '.xls')):
+            return pd.read_excel(io.BytesIO(data)), ''
+        if name.endswith('.pdf'):
+            if pdfplumber is None:
+                return pd.DataFrame(), 'PDF tariff reading needs pdfplumber. It is listed in requirements.txt.'
+            frames = []
+            text_parts = []
+            with pdfplumber.open(io.BytesIO(data)) as pdf:
+                for page in pdf.pages:
+                    for table in page.extract_tables() or []:
+                        if table and len(table) > 1:
+                            header = [str(x or '').strip() for x in table[0]]
+                            rows = table[1:]
+                            frames.append(pd.DataFrame(rows, columns=header))
+                    text_parts.append(page.extract_text() or '')
+            if frames:
+                return pd.concat(frames, ignore_index=True), ''
+            # Fallback: store PDF text as remarks so user can see it, but structured tariff mapping may need manual cleanup.
+            text = '\n'.join(text_parts).strip()
+            if text:
+                return pd.DataFrame([{
+                    'vendor': 'PDF Tariff Upload', 'mode': '', 'origin': '', 'destination': '', 'service': '',
+                    'currency': 'AED', 'remarks': text[:1000]
+                }]), 'PDF text was extracted, but no clear table was found. Please use manual quote lines or convert this PDF to Excel/CSV for automatic matching.'
+            return pd.DataFrame(), 'No readable text/table found in this PDF. It may be scanned image PDF.'
+    except Exception as e:
+        return pd.DataFrame(), f'Could not read {file.name}: {e}'
+    return pd.DataFrame(), f'Unsupported file type: {file.name}'
+
+
+def load_uploaded_tariffs(files) -> Tuple[pd.DataFrame, List[str]]:
+    frames = []
+    messages = []
+    for file in files or []:
+        raw, msg = read_tariff_file(file)
+        if msg:
+            messages.append(f"{file.name}: {msg}")
+        if raw is not None and not raw.empty:
+            try:
+                cleaned = clean_tariff(raw)
+                cleaned['source_file'] = file.name
+                frames.append(cleaned)
+            except Exception as e:
+                messages.append(f"{file.name}: columns could not be mapped to tariff template ({e})")
+    if frames:
+        out = pd.concat(frames, ignore_index=True)
+        # Keep standard tariff columns plus source file.
+        return out[TARIFF_COLUMNS + ['source_file']], messages
+    sample = clean_tariff(SAMPLE_TARIFFS)
+    sample['source_file'] = 'sample'
+    return sample[TARIFF_COLUMNS + ['source_file']], messages
+
+
+def default_manual_quote_lines() -> pd.DataFrame:
+    return pd.DataFrame([
+        {'Description': 'Freight Charges', 'Carrier': '', 'Unit': 'KG/CBM/Shipment', 'Unit Price': 0.0, 'VAT/Tax': 0.0, 'Currency': 'AED', 'Total': 0.0},
+        {'Description': 'Documentation', 'Carrier': '', 'Unit': 'Shipment', 'Unit Price': 0.0, 'VAT/Tax': 0.0, 'Currency': 'AED', 'Total': 0.0},
+    ])
+
+
+def quote_text_from_manual(enq: Dict[str, str], manual_df: pd.DataFrame, chargeable_kg: float, cbm: float) -> str:
+    lines = []
+    total_aed = 0.0
+    for _, r in manual_df.iterrows():
+        desc = str(r.get('Description', '')).strip()
+        if not desc:
+            continue
+        carrier = str(r.get('Carrier', '')).strip()
+        unit = str(r.get('Unit', '')).strip()
+        currency = str(r.get('Currency', 'AED')).strip() or 'AED'
+        unit_price = float(r.get('Unit Price', 0) or 0)
+        vat = float(r.get('VAT/Tax', 0) or 0)
+        total = float(r.get('Total', 0) or 0)
+        if total <= 0:
+            total = unit_price + vat
+        if currency.upper() == 'AED':
+            total_aed += total
+        lines.append(f"- {desc} | Carrier: {carrier or 'TBA'} | Unit: {unit} | Unit Price: {currency} {unit_price:,.2f} | VAT/Tax: {currency} {vat:,.2f} | Total: {currency} {total:,.2f}")
+    return f"""Dear {enq.get('customer') or 'Customer'},
+
+Thank you for your enquiry. Please find our quote below:
+
+Enquiry No: {enq['enquiry_no']}
+Mode: {enq['mode']}
+Origin: {enq['origin']}
+Destination: {enq['destination']}
+Gross Weight: {enq['gross_kg']} kg
+CBM: {cbm:.3f}
+Chargeable Weight: {chargeable_kg:.2f} kg
+
+Quote Lines:
+{chr(10).join(lines) if lines else '- TBA'}
+
+Total Quote: AED {total_aed:,.2f}
+
+Remarks: Subject to space, carrier acceptance, customs approval, and final cargo details. Duties, taxes, storage, demurrage, inspection, destination charges, and insurance are excluded unless specifically mentioned.
+
+Best regards,
+Marvento Rate Desk"""
+
 def parse_dimensions_and_weight(text: str) -> Tuple[pd.DataFrame, Dict[str, float]]:
     rows: List[Dict[str, float]] = []
     t = text.replace("×", "x").replace("*", "x")
@@ -233,18 +341,15 @@ with st.sidebar:
     st.header("Tariff Data")
     st.download_button("Download tariff CSV template", data=pd.DataFrame(columns=TARIFF_COLUMNS).to_csv(index=False), file_name="marvento_tariff_template.csv", mime="text/csv")
     st.download_button("Download sample tariff CSV", data=SAMPLE_TARIFFS.to_csv(index=False), file_name="marvento_sample_tariffs.csv", mime="text/csv")
-    tariff_upload = st.file_uploader("Import real tariff rates by CSV/Excel", type=["csv", "xlsx", "xls"])
+    tariff_uploads = st.file_uploader("Import real tariff rates by CSV / Excel / PDF", type=["csv", "xlsx", "xls", "pdf"], accept_multiple_files=True)
 
 st.title("Marvento Rate Desk")
 st.caption("Enquiry → AI-assisted cargo extraction → chargeable weight → tariff match → ranked rates → margin → quote text")
 
-if tariff_upload:
-    if tariff_upload.name.lower().endswith(".csv"):
-        tariffs = clean_tariff(pd.read_csv(tariff_upload))
-    else:
-        tariffs = clean_tariff(pd.read_excel(tariff_upload))
-else:
-    tariffs = clean_tariff(SAMPLE_TARIFFS)
+tariffs, tariff_messages = load_uploaded_tariffs(tariff_uploads)
+if tariff_messages:
+    for msg in tariff_messages:
+        st.sidebar.warning(msg)
 
 tab1, tab2, tab3 = st.tabs(["Rate Desk", "Tariff Table", "Help"])
 
@@ -318,35 +423,64 @@ with tab1:
     v2.metric("CBM", f"{cbm:,.4f}")
     v3.metric("Chargeable Weight", f"{chargeable_kg:,.2f} kg")
 
-    st.subheader("3. Matching Tariff Rates")
+    st.subheader("3. Manual Quote Option")
+    quote_source = st.radio("Quote Source", ["Use matched tariff rates", "Manual quote"], horizontal=True)
+    manual_quote_df = None
+    if quote_source == "Manual quote":
+        st.info("Enter selling quote lines manually. Total can be typed directly, or leave Total as 0 and the app will calculate Unit Price + VAT/Tax.")
+        manual_quote_df = st.data_editor(
+            default_manual_quote_lines(),
+            num_rows="dynamic",
+            use_container_width=True,
+            column_config={
+                "Description": st.column_config.TextColumn("Description"),
+                "Carrier": st.column_config.TextColumn("Carrier"),
+                "Unit": st.column_config.TextColumn("Unit"),
+                "Unit Price": st.column_config.NumberColumn("Unit Price", min_value=0.0, step=1.0),
+                "VAT/Tax": st.column_config.NumberColumn("VAT/Tax", min_value=0.0, step=1.0),
+                "Currency": st.column_config.SelectboxColumn("Currency", options=["AED", "USD", "EUR", "GBP", "SAR", "INR"]),
+                "Total": st.column_config.NumberColumn("Total", min_value=0.0, step=1.0),
+            },
+            key="manual_quote_lines",
+        )
+        enq = {"enquiry_no": enquiry_no, "customer": customer, "mode": mode, "origin": origin, "destination": destination, "gross_kg": gross_kg}
+        quote_text = quote_text_from_manual(enq, manual_quote_df, chargeable_kg, cbm)
+        st.text_area("Manual quote text", quote_text, height=340)
+        st.download_button("Download manual quote as TXT", quote_text, file_name=f"{enquiry_no}_manual_quote.txt", mime="text/plain")
+
+    st.subheader("4. Matching Tariff Rates")
     ranked = match_rates(tariffs, mode, origin, destination, chargeable_kg, cbm, containers)
 
+    if quote_source == "Manual quote":
+        st.caption("Manual quote selected. Matching tariff rates are shown below for reference only.")
+
     if ranked.empty:
-        st.warning("No matching tariff found. Check mode/origin/destination spelling or upload a tariff file with matching lanes.")
+        st.warning("No matching tariff found. Check mode/origin/destination spelling or upload tariff files with matching lanes.")
     else:
         st.success(f"{len(ranked)} matching tariff(s) found. Ranked by lowest total AED cost.")
         st.dataframe(ranked, use_container_width=True)
-        best_index = st.selectbox("Choose rate for quote", ranked.index, format_func=lambda i: f"Rank {ranked.loc[i, 'rank']} - {ranked.loc[i, 'vendor']} - AED {ranked.loc[i, 'buying_total_aed']:,.2f}")
-        best = ranked.loc[best_index]
-        buying = float(best["buying_total_aed"])
-        if margin_method == "% Markup on Buying":
-            selling = round(buying * (1 + margin_pct / 100), 2)
-        else:
-            selling = round(buying + fixed_margin, 2)
-        margin_aed = round(selling - buying, 2)
-        actual_margin_pct = round((margin_aed / selling * 100), 2) if selling else 0
+        if quote_source == "Use matched tariff rates":
+            best_index = st.selectbox("Choose rate for quote", ranked.index, format_func=lambda i: f"Rank {ranked.loc[i, 'rank']} - {ranked.loc[i, 'vendor']} - AED {ranked.loc[i, 'buying_total_aed']:,.2f}")
+            best = ranked.loc[best_index]
+            buying = float(best["buying_total_aed"])
+            if margin_method == "% Markup on Buying":
+                selling = round(buying * (1 + margin_pct / 100), 2)
+            else:
+                selling = round(buying + fixed_margin, 2)
+            margin_aed = round(selling - buying, 2)
+            actual_margin_pct = round((margin_aed / selling * 100), 2) if selling else 0
 
-        k1, k2, k3, k4 = st.columns(4)
-        k1.metric("Buying Cost", f"AED {buying:,.2f}")
-        k2.metric("Selling Quote", f"AED {selling:,.2f}")
-        k3.metric("Margin AED", f"AED {margin_aed:,.2f}")
-        k4.metric("Margin on Selling", f"{actual_margin_pct:.2f}%")
+            k1, k2, k3, k4 = st.columns(4)
+            k1.metric("Buying Cost", f"AED {buying:,.2f}")
+            k2.metric("Selling Quote", f"AED {selling:,.2f}")
+            k3.metric("Margin AED", f"AED {margin_aed:,.2f}")
+            k4.metric("Margin on Selling", f"{actual_margin_pct:.2f}%")
 
-        st.subheader("4. Prepared Quote Text")
-        enq = {"enquiry_no": enquiry_no, "customer": customer, "mode": mode, "origin": origin, "destination": destination, "gross_kg": gross_kg}
-        quote_text = make_quote_text(enq, best, buying, margin_pct, selling, chargeable_kg, cbm, margin_aed)
-        st.text_area("Quote text", quote_text, height=320)
-        st.download_button("Download quote as TXT", quote_text, file_name=f"{enquiry_no}_quote.txt", mime="text/plain")
+            st.subheader("5. Prepared Quote Text")
+            enq = {"enquiry_no": enquiry_no, "customer": customer, "mode": mode, "origin": origin, "destination": destination, "gross_kg": gross_kg}
+            quote_text = make_quote_text(enq, best, buying, margin_pct, selling, chargeable_kg, cbm, margin_aed)
+            st.text_area("Quote text", quote_text, height=320)
+            st.download_button("Download quote as TXT", quote_text, file_name=f"{enquiry_no}_quote.txt", mime="text/plain")
 
 with tab2:
     st.subheader("Imported / Active Tariff Table")
@@ -359,9 +493,10 @@ with tab3:
 1. Enter customer, mode, origin and destination.  
 2. Upload enquiry email/PDF/Excel/text/image or paste the enquiry text.  
 3. Confirm gross weight, CBM and pieces.  
-4. Upload real tariff CSV/Excel from the left side, or use the sample data.  
+4. Upload one or many real tariff files from the left side: CSV, Excel, or PDF. PDF table extraction is best-effort; scanned PDFs may need manual quote entry.  
 5. The app matches lanes and ranks rates by lowest AED buying cost.  
-6. Enter margin and copy/download the quote text.  
+6. Or choose Manual quote and enter Description, Carrier, Unit, Unit Price, VAT/Tax, Currency, and Total.  
+7. Enter margin and copy/download the quote text.  
 
 **Security:** Change `APP_USERNAME` and `APP_PASSWORD` in Streamlit Cloud secrets. You may set them to the same login you personally use elsewhere, but the app cannot read your ChatGPT password automatically.
 """)

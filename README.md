@@ -47,7 +47,7 @@ streamlit run app.py
 - Extract dimensions/weight from pasted email text, PDF, CSV, Excel, TXT, EML and image files where OCR is available
 - Manual dimension and CBM entry
 - Chargeable weight for Air, Courier, Land and Sea
-- Import real tariff rates by CSV/Excel
+- Import one or many real tariff rates by CSV/Excel/PDF
 - Download tariff CSV template inside the app
 - Match tariffs by mode, origin and destination
 - Rank rates by lowest total AED cost
@@ -59,3 +59,11 @@ streamlit run app.py
 Use the in-app template. Columns:
 
 vendor, mode, origin, destination, service, currency, min_charge, rate_per_kg, rate_per_cbm, rate_per_container, doc_fee, fuel_pct, other_charges, transit_days, valid_from, valid_to, remarks
+
+
+## New in this version
+
+- Multiple tariff uploads are supported.
+- Tariff upload accepts CSV, XLSX, XLS and PDF.
+- PDF tariff extraction works best when the PDF contains selectable text/table data. Scanned image PDFs may not extract cleanly.
+- Manual quote entry is available with these columns: Description, Carrier, Unit, Unit Price, VAT/Tax, Currency and Total.
