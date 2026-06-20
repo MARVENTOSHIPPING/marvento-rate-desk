@@ -34,19 +34,8 @@ NAVY = "#0B3A82"
 
 st.set_page_config(page_title="Marvento Rate Desk", page_icon="🚢", layout="wide")
 
-st.markdown(
-    f"""
-    <style>
-    .main .block-container {{max-width: 1250px; padding-top: 2rem;}}
-    div.stButton > button {{background:{NAVY}; color:white; border-radius:8px; border:0;}}
-    div.stDownloadButton > button {{background:{PINK}; color:white; border-radius:8px; border:0;}}
-    .mv-card {{border:1px solid #e7e7ef; border-radius:14px; padding:18px; background:#ffffff; box-shadow:0 1px 4px rgba(0,0,0,0.04);}}
-    .mv-total {{background:#f9fbff; border-left:6px solid {PINK}; border-radius:12px; padding:16px;}}
-    .small-muted {{color:#6b7280; font-size:14px;}}
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
+# Clean native Streamlit UI only. Avoid HTML labels showing on screen.
+
 
 
 def image_to_base64(path: Path) -> str:
@@ -61,10 +50,10 @@ def header():
         if LOGO_FILE.exists():
             st.image(str(LOGO_FILE), width=260)
         else:
-            st.markdown(f"<h2 style='color:{PINK};'>MARVENTO</h2>", unsafe_allow_html=True)
+            st.subheader("MARVENTO")
     with c2:
-        st.markdown(f"<h1 style='color:{NAVY}; margin-bottom:0;'>Marvento Rate Desk</h1>", unsafe_allow_html=True)
-        st.markdown("<div class='small-muted'>Manual quotation builder → selling total → professional PDF quote</div>", unsafe_allow_html=True)
+        st.title("Marvento Rate Desk")
+        st.caption("Manual quotation builder - cargo details - selling total - professional PDF quote")
 
 
 def login():
@@ -351,7 +340,11 @@ if mode == "Sea":
         st.session_state.sea_cargo_lines.append({"Equipment": "20DV", "Qty": 1, "Gross Weight KG": 0.0, "Cargo Details": ""})
         st.rerun()
     equipment_options = ["20DV", "40STD", "40HC", "40RF", "40 FR"]
-    st.markdown("**Equipment &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; Qty &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; Gross Weight KG &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; Cargo Details**")
+    hc1, hc2, hc3, hc4 = st.columns([1, .6, 1, 3])
+    with hc1: st.write("Equipment")
+    with hc2: st.write("Qty")
+    with hc3: st.write("Gross Weight KG")
+    with hc4: st.write("Cargo Details")
     for i, cargo in enumerate(st.session_state.sea_cargo_lines):
         cc1, cc2, cc3, cc4 = st.columns([1, .6, 1, 3])
         with cc1:
@@ -366,7 +359,15 @@ else:
     if st.button("+ Add cargo row"):
         st.session_state.cargo_lines.append({"Pieces": 1, "Length CM": 0.0, "Width CM": 0.0, "Height CM": 0.0, "Gross Weight KG": 0.0, "Cargo Details": ""})
         st.rerun()
-    st.markdown("**Pieces &nbsp;&nbsp;&nbsp; Length CM &nbsp;&nbsp;&nbsp; Width CM &nbsp;&nbsp;&nbsp; Height CM &nbsp;&nbsp;&nbsp; Gross KG &nbsp;&nbsp;&nbsp; CBM &nbsp;&nbsp;&nbsp; Vol KG &nbsp;&nbsp;&nbsp; Details**")
+    hc1, hc2, hc3, hc4, hc5, hc6, hc7, hc8 = st.columns([.7, .9, .9, .9, 1, .8, .8, 2])
+    with hc1: st.write("Pieces")
+    with hc2: st.write("Length CM")
+    with hc3: st.write("Width CM")
+    with hc4: st.write("Height CM")
+    with hc5: st.write("Gross KG")
+    with hc6: st.write("CBM")
+    with hc7: st.write("Vol KG")
+    with hc8: st.write("Details")
     for i, cargo in enumerate(st.session_state.cargo_lines):
         c1, c2, c3, c4, c5, c6, c7, c8 = st.columns([.7, .9, .9, .9, 1, .8, .8, 2])
         with c1:
@@ -400,7 +401,10 @@ with b2:
         st.session_state.quote_lines = [{"Description": "", "Carrier": "", "Unit": 1.0, "Unit Price": 0.0, "VAT/Tax %": 0.0, "Currency": "AED"}]
         st.rerun()
 
-st.markdown("**Description &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; Carrier &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; Unit &nbsp;&nbsp;&nbsp;&nbsp;&nbsp; Unit Price &nbsp;&nbsp;&nbsp;&nbsp; VAT/Tax % &nbsp;&nbsp; Currency &nbsp;&nbsp;&nbsp; Total**")
+qh = st.columns([2.6, 1.5, .75, 1.1, .85, .9, 1.05])
+for col, label in zip(qh, ["Description", "Carrier", "Unit", "Unit Price", "VAT/Tax %", "Currency", "Total"]):
+    with col:
+        st.write(label)
 
 currency_options = ["AED", "USD", "EUR", "SAR", "INR", "GBP", "CNY"]
 for i, line in enumerate(st.session_state.quote_lines):
@@ -439,9 +443,7 @@ for l in st.session_state.quote_lines:
 total_aed = sum(v * rates.get(c, 1.0) for c, v in totals_by_currency.items())
 mc1, mc2, mc3 = st.columns(3)
 with mc1:
-    st.markdown("<div class='mv-total'>", unsafe_allow_html=True)
     st.metric("Total Selling Quote - AED Equivalent", f"AED {total_aed:,.2f}")
-    st.markdown("</div>", unsafe_allow_html=True)
 with mc2:
     st.metric("Quote Lines", sum(1 for l in st.session_state.quote_lines if str(l.get("Description", "")).strip() or float(l.get("Unit Price", 0) or 0) > 0))
 with mc3:
