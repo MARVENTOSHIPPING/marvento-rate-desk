@@ -378,7 +378,7 @@ def cargo_section(mode):
     return rows
 
 
-def quote_lines_section():
+def quote_lines_section(usd_to_aed=3.675):
     st.markdown("#### Manual Quote Lines")
 
     if "line_rows" not in st.session_state:
@@ -386,27 +386,39 @@ def quote_lines_section():
 
     lines = []
     totals_by_currency = {}
+    total_aed_equivalent = 0.0
 
     for i in range(st.session_state.line_rows):
-        st.markdown(f"Line {i + 1}")
 
-        c1, c2, c3, c4, c5, c6, c7, c8 = st.columns(
-            [2.0, 1.2, 0.7, 1.0, 0.7, 0.8, 1.0, 1.6]
+        st.markdown(f"##### Line {i + 1}")
+
+        c1, c2, c3, c4, c5, c6, c7, c8, c9 = st.columns(
+            [1.8, 1.1, 0.7, 0.9, 0.7, 0.8, 1.0, 1.0, 1.5]
         )
 
         desc = c1.text_input("Description", key=f"quote_desc_{i}")
         carrier = c2.text_input("Carrier", key=f"quote_carrier_{i}")
-        unit = c3.number_input("Unit", min_value=0.0, value=0.0, key=f"quote_unit_{i}")
-        price = c4.number_input("Unit Price", min_value=0.0, value=0.0, key=f"quote_price_{i}")
-        vat = c5.number_input("VAT %", min_value=0.0, value=0.0, key=f"quote_vat_{i}")
+        unit = c3.number_input("Unit", min_value=0.0, value=0.0, step=1.0, key=f"quote_unit_{i}")
+        price = c4.number_input("Unit Price", min_value=0.0, value=0.0, step=1.0, key=f"quote_price_{i}")
+        vat = c5.number_input("VAT %", min_value=0.0, value=0.0, step=1.0, key=f"quote_vat_{i}")
         curr = c6.selectbox("Currency", ["AED", "USD", "EUR", "SAR", "INR", "GBP", "CNY"], key=f"quote_curr_{i}")
 
-        total = unit * price * (1 + vat / 100)
+        total = unit * price
+        total = total + (total * vat / 100)
+
+        if curr == "USD":
+            aed_value = total * usd_to_aed
+        elif curr == "AED":
+            aed_value = total
+        else:
+            aed_value = 0.0
 
         c7.metric("Total", f"{curr} {total:,.2f}")
-        remarks = c8.text_input("Remarks", key=f"quote_remarks_{i}")
+        c8.metric("AED Value", f"AED {aed_value:,.2f}")
 
-        if desc or carrier or total > 0 or remarks:
+        remarks = c9.text_input("Remarks", key=f"quote_remarks_{i}")
+
+        if desc or carrier or unit > 0 or price > 0 or remarks:
             lines.append(
                 {
                     "description": desc,
@@ -416,23 +428,35 @@ def quote_lines_section():
                     "vat": vat,
                     "currency": curr,
                     "total": total,
+                    "aed_value": aed_value,
                     "remarks": remarks,
                 }
             )
+
             totals_by_currency[curr] = totals_by_currency.get(curr, 0) + total
+            total_aed_equivalent += aed_value
+
+        st.divider()
 
     if st.button("+ Add Quote Line", key="add_quote_line_button"):
         st.session_state.line_rows += 1
         st.rerun()
 
+    st.markdown("---")
+
     if totals_by_currency:
+        summary = []
+
+        for curr, value in totals_by_currency.items():
+            summary.append(f"{curr} {value:,.2f}")
+
         st.success(
-            "Total Selling Quote: "
-            + " | ".join([f"{k} {v:,.2f}" for k, v in totals_by_currency.items()])
+            "Total Selling Quote : "
+            + " | ".join(summary)
+            + f" | AED Equivalent: AED {total_aed_equivalent:,.2f}"
         )
 
     return lines, totals_by_currency
-
 
 def make_pdf(data):
     buf = io.BytesIO()
@@ -560,20 +584,22 @@ def make_pdf(data):
 
     story.append(Paragraph("<b>Charges</b>", styles["Heading3"]))
 
-    charges = [["Description", "Carrier", "Unit", "Unit Price", "VAT %", "Currency", "Total"]]
+    charges = [["Description", "Carrier", "Unit", "Unit Price", "VAT %", "Currency", "Total", "AED Value", "Remarks"]]
 
     for r in data.get("lines", []):
         charges.append(
-            [
-                r["description"],
-                r["carrier"],
-                r["unit"],
-                f"{r['unit_price']:,.2f}",
-                f"{r['vat']:,.2f}",
-                r["currency"],
-                f"{r['total']:,.2f}",
-            ]
-        )
+    [
+        r["description"],
+        r["carrier"],
+        r["unit"],
+        f"{r['unit_price']:,.2f}",
+        f"{r['vat']:,.2f}",
+        r["currency"],
+        f"{r['total']:,.2f}",
+        f"{r.get('aed_value', 0):,.2f}",
+        r.get("remarks", ""),
+    ]
+)
 
     tbl = Table(charges, repeatRows=1)
     tbl.setStyle(
