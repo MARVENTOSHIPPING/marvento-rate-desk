@@ -1129,7 +1129,7 @@ def quote_page():
     key="usd_to_aed_rate"
 )
 
-lines, totals = quote_lines_section(usd_to_aed)
+    lines, totals = quote_lines_section(usd_to_aed)
 
     quote_no = next_no("MQ", "quotes", "quote_no")
 
