@@ -672,67 +672,256 @@ def enquiry_page():
 
     customers = customer_options()
 
-    with st.expander("Create Enquiry", expanded=True):
-        customer = (
-            st.selectbox("Customer", customers, key="enquiry_customer_select")
-            if customers
-            else st.text_input("Customer", key="enquiry_customer_text")
+    df_existing = qdf(
+        "SELECT * FROM enquiries ORDER BY id DESC"
+    )
+
+    edit_existing = False
+    selected_enquiry = None
+
+    if not df_existing.empty:
+        edit_existing = st.checkbox(
+            "Edit existing enquiry",
+            key="edit_existing_enquiry_checkbox"
+        )
+
+        if edit_existing:
+            selected_enquiry_no = st.selectbox(
+                "Select enquiry to edit",
+                df_existing["enquiry_no"].tolist(),
+                key="edit_enquiry_select"
+            )
+
+            selected_enquiry = df_existing[
+                df_existing["enquiry_no"] == selected_enquiry_no
+            ].iloc[0].to_dict()
+
+    with st.expander("Create / Edit Enquiry", expanded=True):
+
+        if customers:
+            default_customer_index = 0
+
+            if selected_enquiry and selected_enquiry.get("customer_name") in customers:
+                default_customer_index = customers.index(
+                    selected_enquiry.get("customer_name")
+                )
+
+            customer = st.selectbox(
+                "Customer",
+                customers,
+                index=default_customer_index,
+                key="enquiry_customer_select"
+            )
+        else:
+            customer = st.text_input(
+                "Customer",
+                value=selected_enquiry.get("customer_name", "") if selected_enquiry else "",
+                key="enquiry_customer_text"
+            )
+
+        mode_options = ["Air", "Sea", "Courier", "Land"]
+        service_options = ["EXW", "FCA", "FOB", "CIF", "CPT", "DAP", "DDU", "DDP"]
+        source_options = ["Customer", "Agent", "Website", "WhatsApp", "Email", "Phone", "Referral"]
+        status_options = ["Open", "Quoted", "Won", "Lost", "Cancelled"]
+
+        mode_default = (
+            mode_options.index(selected_enquiry.get("mode"))
+            if selected_enquiry and selected_enquiry.get("mode") in mode_options
+            else 0
+        )
+
+        service_default = (
+            service_options.index(selected_enquiry.get("service"))
+            if selected_enquiry and selected_enquiry.get("service") in service_options
+            else 0
+        )
+
+        source_default = (
+            source_options.index(selected_enquiry.get("source"))
+            if selected_enquiry and selected_enquiry.get("source") in source_options
+            else 0
+        )
+
+        status_default = (
+            status_options.index(selected_enquiry.get("status"))
+            if selected_enquiry and selected_enquiry.get("status") in status_options
+            else 0
         )
 
         a, b, c = st.columns(3)
-        mode = a.selectbox("Mode", ["Air", "Sea", "Courier", "Land"], key="enquiry_mode_select")
-        service = b.selectbox("Service Required", ["EXW", "FCA", "FOB", "CIF", "CPT", "DAP", "DDU", "DDP"], key="enquiry_service_select")
-        source = c.selectbox("Enquiry Source", ["Customer", "Agent", "Website", "WhatsApp", "Email", "Phone", "Referral"], key="enquiry_source_select")
+
+        mode = a.selectbox(
+            "Mode",
+            mode_options,
+            index=mode_default,
+            key="enquiry_mode_select"
+        )
+
+        service = b.selectbox(
+            "Service Required",
+            service_options,
+            index=service_default,
+            key="enquiry_service_select"
+        )
+
+        source = c.selectbox(
+            "Enquiry Source",
+            source_options,
+            index=source_default,
+            key="enquiry_source_select"
+        )
 
         d, e = st.columns(2)
-        origin = d.text_input("AOL / POL / Origin", key="enquiry_origin_input")
-        dest = e.text_input("AOD / POD / Destination", key="enquiry_destination_input")
+
+        origin = d.text_input(
+            "AOL / POL / Origin",
+            value=selected_enquiry.get("origin", "") if selected_enquiry else "",
+            key="enquiry_origin_input"
+        )
+
+        dest = e.text_input(
+            "AOD / POD / Destination",
+            value=selected_enquiry.get("destination", "") if selected_enquiry else "",
+            key="enquiry_destination_input"
+        )
+
+        def safe_date(value):
+            try:
+                if value:
+                    return dt.datetime.strptime(str(value), "%Y-%m-%d").date()
+            except Exception:
+                pass
+            return dt.date.today()
 
         f, g, h = st.columns(3)
-        cargo_ready = f.date_input("Cargo Ready Date", value=dt.date.today(), key="enquiry_cargo_ready_date")
-        follow_up = g.date_input("Follow Up Date", value=dt.date.today(), key="enquiry_follow_up_date")
-        win_probability = h.slider("Win Probability %", 0, 100, 50, key="enquiry_win_probability")
 
-        salesperson = st.text_input("Salesperson", value=st.session_state.get("name", ""), key="enquiry_salesperson_input")
+        cargo_ready = f.date_input(
+            "Cargo Ready Date",
+            value=safe_date(selected_enquiry.get("cargo_ready_date") if selected_enquiry else None),
+            key="enquiry_cargo_ready_date"
+        )
 
-        cargo = st.text_area("Cargo Summary", key="enquiry_cargo_summary")
-        status = st.selectbox("Status", ["Open", "Quoted", "Won", "Lost", "Cancelled"], key="enquiry_status_select")
+        follow_up = g.date_input(
+            "Follow Up Date",
+            value=safe_date(selected_enquiry.get("follow_up_date") if selected_enquiry else None),
+            key="enquiry_follow_up_date"
+        )
 
-        if st.button("Save Enquiry", key="save_enquiry_button") and customer:
-            enq = next_no("ENQ", "enquiries", "enquiry_no")
+        win_probability = h.slider(
+            "Win Probability %",
+            0,
+            100,
+            int(selected_enquiry.get("win_probability", 50)) if selected_enquiry and selected_enquiry.get("win_probability") is not None else 50,
+            key="enquiry_win_probability"
+        )
+
+        salesperson = st.text_input(
+            "Salesperson",
+            value=selected_enquiry.get("salesperson", st.session_state.get("name", "")) if selected_enquiry else st.session_state.get("name", ""),
+            key="enquiry_salesperson_input"
+        )
+
+        cargo = st.text_area(
+            "Cargo Summary",
+            value=selected_enquiry.get("cargo_summary", "") if selected_enquiry else "",
+            key="enquiry_cargo_summary"
+        )
+
+        status = st.selectbox(
+            "Status",
+            status_options,
+            index=status_default,
+            key="enquiry_status_select"
+        )
+
+        button_label = "Update Enquiry" if selected_enquiry else "Save Enquiry"
+
+        if st.button(button_label, key="save_or_update_enquiry_button") and customer:
 
             cdb = conn()
             cur = cdb.cursor()
 
-            cur.execute(
-                """INSERT INTO enquiries(
-                    enquiry_no, customer_name, mode, service, source, origin, destination,
-                    cargo_summary, status, salesperson, cargo_ready_date, follow_up_date,
-                    win_probability, created_at
+            if selected_enquiry:
+                cur.execute(
+                    """UPDATE enquiries SET
+                        customer_name=?,
+                        mode=?,
+                        service=?,
+                        source=?,
+                        origin=?,
+                        destination=?,
+                        cargo_summary=?,
+                        status=?,
+                        salesperson=?,
+                        cargo_ready_date=?,
+                        follow_up_date=?,
+                        win_probability=?
+                    WHERE enquiry_no=?""",
+                    (
+                        customer,
+                        mode,
+                        service,
+                        source,
+                        origin,
+                        dest,
+                        cargo,
+                        status,
+                        salesperson,
+                        str(cargo_ready),
+                        str(follow_up),
+                        win_probability,
+                        selected_enquiry["enquiry_no"],
+                    ),
                 )
-                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-                (
-                    enq,
-                    customer,
-                    mode,
-                    service,
-                    source,
-                    origin,
-                    dest,
-                    cargo,
-                    status,
-                    salesperson,
-                    str(cargo_ready),
-                    str(follow_up),
-                    win_probability,
-                    dt.datetime.now().isoformat(timespec="seconds"),
-                ),
-            )
 
-            cdb.commit()
-            cdb.close()
+                cdb.commit()
+                cdb.close()
 
-            st.success(f"Enquiry saved: {enq}")
+                st.success(f"Enquiry updated: {selected_enquiry['enquiry_no']}")
+
+            else:
+                enq = next_no("ENQ", "enquiries", "enquiry_no")
+
+                cur.execute(
+                    """INSERT INTO enquiries(
+                        enquiry_no,
+                        customer_name,
+                        mode,
+                        service,
+                        source,
+                        origin,
+                        destination,
+                        cargo_summary,
+                        status,
+                        salesperson,
+                        cargo_ready_date,
+                        follow_up_date,
+                        win_probability,
+                        created_at
+                    )
+                    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    (
+                        enq,
+                        customer,
+                        mode,
+                        service,
+                        source,
+                        origin,
+                        dest,
+                        cargo,
+                        status,
+                        salesperson,
+                        str(cargo_ready),
+                        str(follow_up),
+                        win_probability,
+                        dt.datetime.now().isoformat(timespec="seconds"),
+                    ),
+                )
+
+                cdb.commit()
+                cdb.close()
+
+                st.success(f"Enquiry saved: {enq}")
 
     st.dataframe(
         qdf(
@@ -743,44 +932,124 @@ def enquiry_page():
         use_container_width=True,
     )
 
-
 def quote_page():
     st.subheader("Quotation Generator")
 
     customers = customer_options()
-    enqs = qdf("SELECT enquiry_no, customer_name, mode, service, origin, destination FROM enquiries ORDER BY id DESC")
 
-    use_enq = st.checkbox("Create from existing enquiry", key="quote_use_existing_enquiry")
+    enqs = qdf(
+        "SELECT enquiry_no, customer_name, mode, service, origin, destination, cargo_summary "
+        "FROM enquiries ORDER BY id DESC"
+    )
+
+    use_enq = st.checkbox(
+        "Create from existing enquiry",
+        key="quote_use_existing_enquiry"
+    )
+
     selected = None
 
     if use_enq and not enqs.empty:
-        enq_no = st.selectbox("Select Enquiry", enqs["enquiry_no"].tolist(), key="quote_enquiry_select")
-        selected = enqs[enqs["enquiry_no"] == enq_no].iloc[0].to_dict()
+        enq_no = st.selectbox(
+            "Select Enquiry",
+            enqs["enquiry_no"].tolist(),
+            key="quote_enquiry_select"
+        )
 
-    customer = selected["customer_name"] if selected else (
-        st.selectbox("Customer", customers, key="quote_customer_select") if customers else st.text_input("Customer", key="quote_customer_text")
-    )
+        selected = enqs[
+            enqs["enquiry_no"] == enq_no
+        ].iloc[0].to_dict()
+
+        st.success(f"Loaded enquiry: {selected['enquiry_no']}")
+
+    if selected:
+        customer = selected.get("customer_name", "")
+    else:
+        if customers:
+            customer = st.selectbox(
+                "Customer",
+                customers,
+                key="quote_customer_select"
+            )
+        else:
+            customer = st.text_input(
+                "Customer",
+                key="quote_customer_text"
+            )
 
     cust = get_customer(customer)
 
+    mode_options = ["Air", "Sea", "Courier", "Land"]
+    service_options = ["EXW", "FCA", "FOB", "CIF", "CPT", "DAP", "DDU", "DDP"]
+
+    mode_default = (
+        mode_options.index(selected.get("mode"))
+        if selected and selected.get("mode") in mode_options
+        else 0
+    )
+
+    service_default = (
+        service_options.index(selected.get("service"))
+        if selected and selected.get("service") in service_options
+        else 0
+    )
+
     a, b, c, d = st.columns(4)
 
-    mode_index = ["Air", "Sea", "Courier", "Land"].index(selected["mode"]) if selected else 0
-    mode = a.selectbox("Mode", ["Air", "Sea", "Courier", "Land"], index=mode_index, key="quote_mode_select")
+    mode = a.selectbox(
+        "Mode",
+        mode_options,
+        index=mode_default,
+        key="quote_mode_select"
+    )
 
-    service_options = ["EXW", "FCA", "FOB", "CIF", "CPT", "DAP", "DDU", "DDP"]
-    service_index = service_options.index(selected["service"]) if selected and selected["service"] in service_options else 0
-    service = b.selectbox("Service", service_options, index=service_index, key="quote_service_select")
+    service = b.selectbox(
+        "Service",
+        service_options,
+        index=service_default,
+        key="quote_service_select"
+    )
 
-    origin = c.text_input("AOL/POL/Origin", value=selected["origin"] if selected else "", key="quote_origin_input")
-    dest = d.text_input("AOD/POD/Destination", value=selected["destination"] if selected else "", key="quote_destination_input")
+    origin = c.text_input(
+        "AOL/POL/Origin",
+        value=selected.get("origin", "") if selected else "",
+        key="quote_origin_input"
+    )
+
+    dest = d.text_input(
+        "AOD/POD/Destination",
+        value=selected.get("destination", "") if selected else "",
+        key="quote_destination_input"
+    )
 
     e, f, g = st.columns(3)
-    attention_to = e.text_input("Attention To", value=cust.get("contact_person", "") if cust else "", key="quote_attention_input")
-    customer_email = f.text_input("Customer Email", value=cust.get("email", "") if cust else "", key="quote_email_input")
-    customer_phone = g.text_input("Customer Phone", value=cust.get("phone", "") if cust else "", key="quote_phone_input")
 
-    validity = st.text_input("Rate Validity", value="15 days", key="quote_validity_input")
+    attention_to = e.text_input(
+        "Attention To",
+        value=cust.get("contact_person", "") if cust else "",
+        key="quote_attention_input"
+    )
+
+    customer_email = f.text_input(
+        "Customer Email",
+        value=cust.get("email", "") if cust else "",
+        key="quote_email_input"
+    )
+
+    customer_phone = g.text_input(
+        "Customer Phone",
+        value=cust.get("phone", "") if cust else "",
+        key="quote_phone_input"
+    )
+
+    validity = st.text_input(
+        "Rate Validity",
+        value="15 days",
+        key="quote_validity_input"
+    )
+
+    if selected and selected.get("cargo_summary"):
+        st.info(f"Cargo Summary from Enquiry: {selected.get('cargo_summary')}")
 
     ai_cargo_upload_section()
 
@@ -790,11 +1059,16 @@ def quote_page():
 
     quote_no = next_no("MQ", "quotes", "quote_no")
 
-    primary_currency = list(totals.keys())[0] if lines else "AED"
-    primary_total = totals[primary_currency] if lines else 0.0
+    if lines:
+        primary_currency = list(totals.keys())[0]
+        primary_total = totals[primary_currency]
+    else:
+        primary_currency = "AED"
+        primary_total = 0.0
 
     data = {
         "quote_no": quote_no,
+        "enquiry_no": selected.get("enquiry_no", "") if selected else "",
         "customer_name": customer,
         "attention_to": attention_to,
         "customer_email": customer_email,
@@ -825,20 +1099,37 @@ def quote_page():
             )
 
     with col2:
-        if st.button("Save Quote in Database", use_container_width=True, disabled=not bool(pdf), key="save_quote_button"):
+        if st.button(
+            "Save Quote in Database",
+            use_container_width=True,
+            disabled=not bool(pdf),
+            key="save_quote_button"
+        ):
             cdb = conn()
             cur = cdb.cursor()
 
             cur.execute(
                 """INSERT INTO quotes(
-                    quote_no, enquiry_no, customer_name, mode, origin, destination,
-                    service, validity, currency, total, status, salesperson,
-                    quote_json, pdf, created_at
+                    quote_no,
+                    enquiry_no,
+                    customer_name,
+                    mode,
+                    origin,
+                    destination,
+                    service,
+                    validity,
+                    currency,
+                    total,
+                    status,
+                    salesperson,
+                    quote_json,
+                    pdf,
+                    created_at
                 )
                 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (
                     quote_no,
-                    selected["enquiry_no"] if selected else "",
+                    selected.get("enquiry_no", "") if selected else "",
                     customer,
                     mode,
                     origin,
@@ -858,8 +1149,17 @@ def quote_page():
             cdb.commit()
             cdb.close()
 
-            st.success(f"Quote saved: {quote_no}")
+            if selected:
+                cdb = conn()
+                cur = cdb.cursor()
+                cur.execute(
+                    "UPDATE enquiries SET status='Quoted' WHERE enquiry_no=?",
+                    (selected.get("enquiry_no"),)
+                )
+                cdb.commit()
+                cdb.close()
 
+            st.success(f"Quote saved: {quote_no}")
 
 def saved_quotes_page():
     st.subheader("Saved Quotations")
