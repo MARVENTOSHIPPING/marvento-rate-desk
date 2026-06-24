@@ -437,7 +437,7 @@ def quote_lines_section(usd_to_aed=3.685):
             totals_by_currency[curr] = totals_by_currency.get(curr, 0) + total
             total_aed_equivalent += aed_value
 
-        st.divider()
+        st.markdown("<hr style='margin:3px 0;'>", unsafe_allow_html=True)
 
     if st.button("+ Add Quote Line", key="add_quote_line_button"):
         st.session_state.line_rows += 1
