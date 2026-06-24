@@ -390,9 +390,7 @@ def quote_lines_section(usd_to_aed=3.685):
 
     for i in range(st.session_state.line_rows):
 
-        st.markdown(
-            f"<small><b>Line {i + 1}</b></small>",
-            unsafe_allow_html=True
+        st.markdown("##### Charges")    
         )
 
         c1, c2, c3, c4, c5, c6, c7, c8, c9 = st.columns(
