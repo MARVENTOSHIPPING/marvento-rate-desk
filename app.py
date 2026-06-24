@@ -1,30 +1,25 @@
-import base64
+import datetime as dt
+import io
 import json
-import re
-from datetime import date, datetime
-from io import BytesIO
+import sqlite3
 from pathlib import Path
 
 import pandas as pd
 import streamlit as st
-from PIL import Image
-try:
-    from pypdf import PdfReader
-except Exception:
-    PdfReader = None
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib.units import mm
-from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image as RLImage
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image
 
-APP_USER = "kiran.dxb@marventoshipping.com"
-APP_PASS = "ChangeMe123"
-LOGO_FILE = Path(__file__).parent / "marvento_logo.png"
-SAVED_QUOTES_DIR = Path(__file__).parent / "saved_quotes"
-SAVED_QUOTES_DIR.mkdir(exist_ok=True)
+APP_TITLE = "Marvento Rate Desk Pro"
+DB_PATH = Path("marvento_pro.db")
+LOGO_PATH = Path("marvento_logo.png")
 
-MARVENTO = {
+NAVY = "#0B3A82"
+PINK = "#E91E8F"
+
+COMPANY = {
     "name": "MARVENTO SHIPPING LLC",
     "address": "Office 210, Al Nakheel Building, Karama",
     "phone": "+97143535822",
@@ -32,551 +27,953 @@ MARVENTO = {
     "website": "www.marventoshipping.com",
     "trn": "104851107300003",
 }
-PINK = "#E91E8F"
-NAVY = "#0B3A82"
 
-st.set_page_config(page_title="Marvento Rate Desk", page_icon="🚢", layout="wide")
+USERS = {
+    "kiran.dxb@marventoshipping.com": {"password": "ChangeMe123", "role": "Admin", "name": "Kiran"},
+    "sales1@marventoshipping.com": {"password": "ChangeMe123", "role": "Sales", "name": "Sales 1"},
+    "sales2@marventoshipping.com": {"password": "ChangeMe123", "role": "Sales", "name": "Sales 2"},
+    "ops@marventoshipping.com": {"password": "ChangeMe123", "role": "Operations", "name": "Operations"},
+    "management@marventoshipping.com": {"password": "ChangeMe123", "role": "Management", "name": "Management"},
+}
 
-# Clean native Streamlit UI only. Avoid HTML labels showing on screen.
+st.set_page_config(page_title=APP_TITLE, layout="wide")
 
-
-
-def image_to_base64(path: Path) -> str:
-    if not path.exists():
-        return ""
-    return base64.b64encode(path.read_bytes()).decode("utf-8")
-
-
-
-
-def safe_filename(value: str) -> str:
-    value = value or "quote"
-    value = re.sub(r"[^A-Za-z0-9._-]+", "_", value).strip("_")
-    return value[:80] or "quote"
-
-
-def save_quote_pdf(enq, pdf_bytes, total_aed, totals_by_currency):
-    quote_no = safe_filename(enq.get("quote_no", "quote"))
-    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    pdf_name = f"{quote_no}_{stamp}_Marvento_Quotation.pdf"
-    meta_name = f"{quote_no}_{stamp}_metadata.json"
-    pdf_path = SAVED_QUOTES_DIR / pdf_name
-    meta_path = SAVED_QUOTES_DIR / meta_name
-    pdf_path.write_bytes(pdf_bytes)
-    metadata = {
-        "quote_no": enq.get("quote_no", ""),
-        "customer": enq.get("customer", ""),
-        "mode": enq.get("mode", ""),
-        "origin": enq.get("origin", ""),
-        "destination": enq.get("destination", ""),
-        "validity": enq.get("validity", ""),
-        "quote_date": enq.get("quote_date", ""),
-        "saved_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "total_aed": float(total_aed or 0),
-        "currency_totals": totals_by_currency,
-        "pdf_file": pdf_name,
-    }
-    meta_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
-    return pdf_path
+st.markdown(
+    f"""
+<style>
+.block-container {{padding-top: 1.2rem; max-width: 1400px;}}
+.stButton>button {{background-color:{NAVY}; color:white; border-radius:8px;}}
+.stDownloadButton>button {{background-color:{PINK}; color:white; border-radius:8px;}}
+div[data-testid="stMetricValue"] {{color:{NAVY};}}
+.small-note {{color:#666; font-size:13px;}}
+</style>
+""",
+    unsafe_allow_html=True,
+)
 
 
-def list_saved_quotes():
-    rows = []
-    for meta_path in sorted(SAVED_QUOTES_DIR.glob("*_metadata.json"), reverse=True):
-        try:
-            meta = json.loads(meta_path.read_text(encoding="utf-8"))
-            pdf_path = SAVED_QUOTES_DIR / meta.get("pdf_file", "")
-            if pdf_path.exists():
-                meta["_pdf_path"] = str(pdf_path)
-                rows.append(meta)
-        except Exception:
-            pass
-    return rows
+def conn():
+    return sqlite3.connect(DB_PATH, check_same_thread=False)
 
 
-def header():
-    c1, c2 = st.columns([1.2, 3.8])
-    with c1:
-        if LOGO_FILE.exists():
-            st.image(str(LOGO_FILE), width=260)
-        else:
-            st.subheader("MARVENTO")
-    with c2:
-        st.title("Marvento Rate Desk")
-        st.caption("Manual quotation builder - cargo details - selling total - professional PDF quote")
+def ensure_column(cur, table, column, definition):
+    cur.execute(f"PRAGMA table_info({table})")
+    cols = [r[1] for r in cur.fetchall()]
+    if column not in cols:
+        cur.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+
+
+def init_db():
+    c = conn()
+    cur = c.cursor()
+
+    cur.execute(
+        """CREATE TABLE IF NOT EXISTS customers(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL UNIQUE,
+        contact_person TEXT,
+        email TEXT,
+        phone TEXT,
+        address TEXT,
+        credit_terms TEXT,
+        salesperson TEXT,
+        created_at TEXT
+    )"""
+    )
+
+    cur.execute(
+        """CREATE TABLE IF NOT EXISTS enquiries(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        enquiry_no TEXT UNIQUE,
+        customer_id INTEGER,
+        customer_name TEXT,
+        mode TEXT,
+        service TEXT,
+        origin TEXT,
+        destination TEXT,
+        cargo_summary TEXT,
+        status TEXT,
+        salesperson TEXT,
+        created_at TEXT
+    )"""
+    )
+
+    cur.execute(
+        """CREATE TABLE IF NOT EXISTS quotes(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        quote_no TEXT UNIQUE,
+        enquiry_no TEXT,
+        customer_name TEXT,
+        mode TEXT,
+        origin TEXT,
+        destination TEXT,
+        service TEXT,
+        validity TEXT,
+        currency TEXT,
+        total REAL,
+        status TEXT,
+        salesperson TEXT,
+        quote_json TEXT,
+        pdf BLOB,
+        created_at TEXT
+    )"""
+    )
+
+    ensure_column(cur, "customers", "country", "TEXT")
+    ensure_column(cur, "customers", "industry", "TEXT")
+    ensure_column(cur, "customers", "trn", "TEXT")
+
+    ensure_column(cur, "enquiries", "source", "TEXT")
+    ensure_column(cur, "enquiries", "cargo_ready_date", "TEXT")
+    ensure_column(cur, "enquiries", "follow_up_date", "TEXT")
+    ensure_column(cur, "enquiries", "win_probability", "REAL")
+
+    c.commit()
+    c.close()
+
+
+def qdf(query, params=()):
+    c = conn()
+    try:
+        return pd.read_sql_query(query, c, params=params)
+    finally:
+        c.close()
+
+
+def next_no(prefix, table, col):
+    year = dt.datetime.now().year
+    c = conn()
+    cur = c.cursor()
+    cur.execute(
+        f"SELECT {col} FROM {table} WHERE {col} LIKE ? ORDER BY id DESC LIMIT 1",
+        (f"{prefix}-{year}-%",),
+    )
+    row = cur.fetchone()
+    c.close()
+    n = 1 if not row else int(row[0].split("-")[-1]) + 1
+    return f"{prefix}-{year}-{n:04d}"
+
+
+def add_logo(width=240):
+    if LOGO_PATH.exists():
+        st.image(str(LOGO_PATH), width=width)
+    else:
+        st.markdown(f"### {COMPANY['name']}")
 
 
 def login():
-    header()
-    st.divider()
-    st.subheader("Login")
-    username = st.text_input("Username")
-    password = st.text_input("Password", type="password")
-    if st.button("Login"):
-        if username.strip().lower() == APP_USER.lower() and password == APP_PASS:
-            st.session_state.logged_in = True
-            st.rerun()
-        else:
-            st.error("Invalid username or password")
+    if st.session_state.get("logged_in"):
+        return True
+
+    col1, col2, col3 = st.columns([1, 1.2, 1])
+    with col2:
+        add_logo(260)
+        st.subheader("Rate Desk Pro Login")
+        u = st.text_input("Username")
+        p = st.text_input("Password", type="password")
+
+        if st.button("Login", use_container_width=True):
+            if u in USERS and USERS[u]["password"] == p:
+                st.session_state.logged_in = True
+                st.session_state.user = u
+                st.session_state.role = USERS[u]["role"]
+                st.session_state.name = USERS[u]["name"]
+                st.rerun()
+            else:
+                st.error("Invalid username or password")
+    return False
 
 
-def fmt_money(v):
-    try:
-        return f"{float(v):,.2f}"
-    except Exception:
-        return "0.00"
+def customer_options():
+    df = qdf("SELECT name FROM customers ORDER BY name")
+    return df["name"].tolist() if not df.empty else []
 
 
-def init_state():
-    if "quote_lines" not in st.session_state:
-        st.session_state.quote_lines = [
-            {"Description": "Freight Charges", "Carrier": "", "Unit": 1.0, "Unit Price": 0.0, "VAT/Tax %": 0.0, "Currency": "AED"},
-            {"Description": "Documentation", "Carrier": "", "Unit": 1.0, "Unit Price": 0.0, "VAT/Tax %": 0.0, "Currency": "AED"},
-            {"Description": "", "Carrier": "", "Unit": 1.0, "Unit Price": 0.0, "VAT/Tax %": 0.0, "Currency": "AED"},
-        ]
-    if "cargo_lines" not in st.session_state:
-        st.session_state.cargo_lines = [{"Pieces": 1, "Length CM": 0.0, "Width CM": 0.0, "Height CM": 0.0, "Gross Weight KG": 0.0, "Cargo Details": ""}]
-    if "sea_cargo_lines" not in st.session_state:
-        st.session_state.sea_cargo_lines = [{"Equipment": "20DV", "Qty": 1, "Gross Weight KG": 0.0, "Cargo Details": ""}]
+def get_customer(name):
+    if not name:
+        return {}
+    df = qdf("SELECT * FROM customers WHERE name=?", (name,))
+    if df.empty:
+        return {}
+    return df.iloc[0].to_dict()
 
 
-def line_total(line):
-    unit = float(line.get("Unit", 0) or 0)
-    price = float(line.get("Unit Price", 0) or 0)
-    vat = float(line.get("VAT/Tax %", 0) or 0)
-    return unit * price * (1 + vat / 100)
+def save_customer(name, contact, email, phone, address, credit_terms, salesperson, country, industry, trn):
+    c = conn()
+    cur = c.cursor()
+    cur.execute(
+        """INSERT INTO customers(
+            name, contact_person, email, phone, address, credit_terms,
+            salesperson, country, industry, trn, created_at
+        )
+        VALUES(?,?,?,?,?,?,?,?,?,?,?)
+        ON CONFLICT(name) DO UPDATE SET
+            contact_person=excluded.contact_person,
+            email=excluded.email,
+            phone=excluded.phone,
+            address=excluded.address,
+            credit_terms=excluded.credit_terms,
+            salesperson=excluded.salesperson,
+            country=excluded.country,
+            industry=excluded.industry,
+            trn=excluded.trn
+        """,
+        (
+            name,
+            contact,
+            email,
+            phone,
+            address,
+            credit_terms,
+            salesperson,
+            country,
+            industry,
+            trn,
+            dt.datetime.now().isoformat(timespec="seconds"),
+        ),
+    )
+    c.commit()
+    c.close()
 
 
-def cargo_cbm(line):
-    pcs = float(line.get("Pieces", 0) or 0)
-    l = float(line.get("Length CM", 0) or 0)
-    w = float(line.get("Width CM", 0) or 0)
-    h = float(line.get("Height CM", 0) or 0)
-    return pcs * l * w * h / 1000000
+def ai_cargo_upload_section():
+    st.markdown("#### AI Cargo Extraction from Document")
+    st.caption("Phase 2 preparation: upload PDF/image now. AI reading engine can be connected later.")
+
+    cargo_file = st.file_uploader(
+        "Upload packing list / customer PDF / screenshot",
+        type=["pdf", "png", "jpg", "jpeg"],
+    )
+
+    if cargo_file:
+        st.success(f"Uploaded: {cargo_file.name}")
+        st.info(
+            "Next Phase 2 engine will extract pieces, dimensions, gross weight, CBM and chargeable weight automatically."
+        )
+
+        with st.expander("Example output expected from uploaded packing list"):
+            st.write(
+                {
+                    "Packages": "1",
+                    "Pieces": "60",
+                    "Dimensions CM": "121 x 101 x 78",
+                    "Gross Weight KG": "74.8",
+                    "CBM": "1.00",
+                    "Air Chargeable KG": "159",
+                }
+            )
 
 
-def cargo_vol_kg(line, mode):
-    cbm = cargo_cbm(line)
-    if mode == "Courier":
-        pcs = float(line.get("Pieces", 0) or 0)
-        l = float(line.get("Length CM", 0) or 0)
-        w = float(line.get("Width CM", 0) or 0)
-        h = float(line.get("Height CM", 0) or 0)
-        return pcs * l * w * h / 5000
-    if mode == "Land":
-        return cbm * 333
-    return cbm * 167
+def cargo_section(mode):
+    st.markdown("#### Cargo Details")
 
+    if "cargo_rows" not in st.session_state:
+        st.session_state.cargo_rows = 1
 
-def total_chargeable(lines, mode):
-    gross = sum(float(x.get("Gross Weight KG", 0) or 0) for x in lines)
-    volume = sum(cargo_vol_kg(x, mode) for x in lines)
-    return max(gross, volume)
+    if st.button("+ Add Cargo Row"):
+        st.session_state.cargo_rows += 1
+        st.rerun()
 
+    rows = []
 
-def extract_text_from_upload(file):
-    name = file.name.lower()
-    data = file.read()
-    try:
-        if name.endswith(".pdf") and PdfReader is not None:
-            reader = PdfReader(BytesIO(data))
-            return "\n".join(page.extract_text() or "" for page in reader.pages)
-        if name.endswith((".txt", ".csv", ".eml")):
-            return data.decode("utf-8", errors="ignore")
-    except Exception:
-        return ""
-    return ""
-
-
-def ai_extract_cargo_lines(text):
-    text = text.replace("×", "x").replace("X", "x")
-    results = []
-    # Examples: 2 pcs 120x80x60 cm 450 kg, 120 x 80 x 60 / 2 pkgs / 450kgs
-    dim_pattern = re.compile(r"(?:(\d+)\s*(?:pcs|pc|pkgs|pkg|ctns|ctn|packages|package)\D{0,20})?(\d+(?:\.\d+)?)\s*x\s*(\d+(?:\.\d+)?)\s*x\s*(\d+(?:\.\d+)?)\s*(?:cm|cms)?", re.I)
-    weight_pattern = re.compile(r"(gross\s*weight|gw|weight|wt)\D{0,12}(\d+(?:\.\d+)?)\s*(kg|kgs)", re.I)
-    weights = [float(m.group(2)) for m in weight_pattern.finditer(text)]
-    for idx, m in enumerate(dim_pattern.finditer(text)):
-        pcs = int(m.group(1)) if m.group(1) else 1
-        gw = weights[idx] if idx < len(weights) else 0.0
-        results.append({
-            "Pieces": pcs, "Length CM": float(m.group(2)), "Width CM": float(m.group(3)), "Height CM": float(m.group(4)),
-            "Gross Weight KG": gw, "Cargo Details": "AI extracted - please verify"
-        })
-    return results
-
-
-def cargo_summary_table(mode, cargo_lines, sea_lines):
     if mode == "Sea":
-        rows = [["Equipment", "Qty", "Gross Weight KG", "Cargo Details"]]
-        for c in sea_lines:
-            rows.append([c.get("Equipment",""), str(c.get("Qty",1)), fmt_money(c.get("Gross Weight KG",0)), c.get("Cargo Details","")])
-        return rows
-    rows = [["Pieces", "Dimensions CM", "Gross KG", "CBM", "Vol KG", "Chargeable KG"]]
-    for c in cargo_lines:
-        dims = f"{fmt_money(c.get('Length CM',0))} x {fmt_money(c.get('Width CM',0))} x {fmt_money(c.get('Height CM',0))}"
-        rows.append([str(c.get("Pieces",1)), dims, fmt_money(c.get("Gross Weight KG",0)), fmt_money(cargo_cbm(c)), fmt_money(cargo_vol_kg(c, mode)), ""])
-    rows.append(["", "", "", "", "Total CW", fmt_money(total_chargeable(cargo_lines, mode))])
+        total_cbm = 0.0
+        total_gw = 0.0
+        total_containers = 0
+
+        for i in range(st.session_state.cargo_rows):
+            st.markdown(f"Cargo Row {i + 1}")
+            a, b, c, d, e = st.columns([1.2, 1.1, 1.2, 1.2, 2.5])
+
+            eq = a.selectbox(
+                "Equipment",
+                ["LCL", "20DV", "40STD", "40HC", "40RF", "40FR", "45HC"],
+                key=f"eq_{i}",
+            )
+
+            if eq == "LCL":
+                cbm = b.number_input("CBM", min_value=0.0, value=0.0, key=f"sea_cbm_{i}")
+                gw = c.number_input("Gross Weight KG", min_value=0.0, value=0.0, key=f"sea_gw_{i}")
+                packages = d.number_input("Packages", min_value=1, value=1, key=f"sea_pkg_{i}")
+                desc = e.text_input("Cargo Description", key=f"sea_desc_{i}")
+
+                total_cbm += cbm
+                total_gw += gw
+
+                rows.append(
+                    {
+                        "equipment": "LCL",
+                        "cbm": cbm,
+                        "packages": packages,
+                        "gross_weight": gw,
+                        "description": desc,
+                    }
+                )
+
+            else:
+                qty = b.number_input("Container Qty", min_value=1, value=1, key=f"eq_qty_{i}")
+                gw = c.number_input("Gross Weight KG", min_value=0.0, value=0.0, key=f"sea_gw_{i}")
+                desc = e.text_input("Cargo Description", key=f"sea_desc_{i}")
+
+                total_containers += qty
+                total_gw += gw
+
+                rows.append(
+                    {
+                        "equipment": eq,
+                        "qty": qty,
+                        "gross_weight": gw,
+                        "description": desc,
+                    }
+                )
+
+        st.info(
+            f"Sea Summary: Total CBM {total_cbm:.3f} | Total Gross Weight {total_gw:.2f} KG | Total Containers {total_containers}"
+        )
+
+    else:
+        total_cbm = 0.0
+        total_gw = 0.0
+        total_chw = 0.0
+
+        for i in range(st.session_state.cargo_rows):
+            st.markdown(f"Cargo Row {i + 1}")
+            a, b, c, d, e, f, g = st.columns([0.8, 1, 1, 1, 1, 1, 1])
+
+            pcs = a.number_input("Pcs", min_value=1, value=1, key=f"pcs_{i}")
+            l = b.number_input("L cm", min_value=0.0, value=0.0, key=f"l_{i}")
+            w = c.number_input("W cm", min_value=0.0, value=0.0, key=f"w_{i}")
+            h = d.number_input("H cm", min_value=0.0, value=0.0, key=f"h_{i}")
+            gw = e.number_input("Gross KG", min_value=0.0, value=0.0, key=f"gw_{i}")
+
+            cbm = (l * w * h * pcs) / 1_000_000 if l and w and h else 0.0
+            divisor = 6000
+            vol = (l * w * h * pcs) / divisor if l and w and h else 0.0
+            chw = max(gw, vol)
+
+            f.metric("CBM", f"{cbm:.3f}")
+            g.metric("Chg KG", f"{chw:.2f}")
+
+            total_cbm += cbm
+            total_gw += gw
+            total_chw += chw
+
+            rows.append(
+                {
+                    "pcs": pcs,
+                    "l": l,
+                    "w": w,
+                    "h": h,
+                    "gross_weight": gw,
+                    "cbm": cbm,
+                    "chargeable_weight": chw,
+                }
+            )
+
+        st.info(
+            f"Total Gross Weight: {total_gw:.2f} KG | Total CBM: {total_cbm:.3f} | Total Chargeable Weight: {total_chw:.2f} KG"
+        )
+
     return rows
 
 
-def make_pdf(enq, lines, totals_by_currency, total_aed, cargo_rows):
-    buffer = BytesIO()
-    doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=14*mm, leftMargin=14*mm, topMargin=12*mm, bottomMargin=12*mm)
-    styles = getSampleStyleSheet()
-    styles.add(ParagraphStyle(name="MVTitle", parent=styles["Heading1"], textColor=colors.HexColor(NAVY), fontSize=18, leading=22))
-    styles.add(ParagraphStyle(name="MVSmall", parent=styles["Normal"], fontSize=8, leading=10, textColor=colors.HexColor(NAVY)))
-    styles.add(ParagraphStyle(name="MVNormal", parent=styles["Normal"], fontSize=9, leading=12))
-    elements = []
+def quote_lines_section():
+    st.markdown("#### Manual Quote Lines")
 
-    logo_obj = ""
-    if LOGO_FILE.exists():
-        logo_obj = RLImage(str(LOGO_FILE), width=58*mm, height=20*mm)
-    company_text = Paragraph(
-        f"<b>{MARVENTO['name']}</b><br/>{MARVENTO['address']}<br/>Tel: {MARVENTO['phone']}<br/>Email: {MARVENTO['email']} | {MARVENTO['website']}<br/>TRN: {MARVENTO['trn']}",
-        styles["MVSmall"],
+    if "line_rows" not in st.session_state:
+        st.session_state.line_rows = 4
+
+    if st.button("+ Add Quote Line"):
+        st.session_state.line_rows += 1
+        st.rerun()
+
+    lines = []
+    totals_by_currency = {}
+
+    for i in range(st.session_state.line_rows):
+        st.markdown(f"Line {i + 1}")
+        c1, c2, c3, c4, c5, c6, c7 = st.columns([2.2, 1.4, 0.8, 1.1, 0.8, 0.9, 1.2])
+
+        desc = c1.text_input("Description", key=f"desc_{i}")
+        carrier = c2.text_input("Carrier", key=f"carrier_{i}")
+        unit = c3.number_input("Unit", min_value=0.0, value=0.0, key=f"unit_{i}")
+        price = c4.number_input("Unit Price", min_value=0.0, value=0.0, key=f"price_{i}")
+        vat = c5.number_input("VAT %", min_value=0.0, value=0.0, key=f"vat_{i}")
+        curr = c6.selectbox("Currency", ["AED", "USD", "EUR", "SAR", "INR", "GBP", "CNY"], key=f"curr_{i}")
+
+        total = unit * price * (1 + vat / 100)
+        c7.metric("Total", f"{curr} {total:,.2f}")
+
+        if desc or carrier or total > 0:
+            lines.append(
+                {
+                    "description": desc,
+                    "carrier": carrier,
+                    "unit": unit,
+                    "unit_price": price,
+                    "vat": vat,
+                    "currency": curr,
+                    "total": total,
+                }
+            )
+            totals_by_currency[curr] = totals_by_currency.get(curr, 0) + total
+
+    if totals_by_currency:
+        st.success(
+            "Total Selling Quote: "
+            + " | ".join([f"{k} {v:,.2f}" for k, v in totals_by_currency.items()])
+        )
+
+    return lines, totals_by_currency
+
+
+def make_pdf(data):
+    buf = io.BytesIO()
+
+    doc = SimpleDocTemplate(
+        buf,
+        pagesize=A4,
+        rightMargin=15 * mm,
+        leftMargin=15 * mm,
+        topMargin=12 * mm,
+        bottomMargin=12 * mm,
     )
-    header_tbl = Table([[logo_obj, company_text]], colWidths=[78*mm, 94*mm])
-    header_tbl.setStyle(TableStyle([
-        ("VALIGN", (0,0), (-1,-1), "TOP"),
-        ("ALIGN", (0,0), (0,0), "LEFT"),
-        ("ALIGN", (1,0), (1,0), "RIGHT"),
-    ]))
-    elements.append(header_tbl)
-    elements.append(Spacer(1, 8*mm))
-    elements.append(Paragraph("QUOTATION", styles["MVTitle"]))
-    elements.append(Spacer(1, 3*mm))
 
-    details = [
-        ["Quote No", enq.get("quote_no", ""), "Date", enq.get("quote_date", "")],
-        ["Customer", enq.get("customer", ""), "Validity", enq.get("validity", "")],
-        ["Mode", enq.get("mode", ""), "Service Term", enq.get("service", "")],
-        ["Origin", enq.get("origin", ""), "Destination", enq.get("destination", "")],
+    styles = getSampleStyleSheet()
+    story = []
+
+    if LOGO_PATH.exists():
+        story.append(Image(str(LOGO_PATH), width=55 * mm, height=22 * mm, hAlign="LEFT"))
+
+    story.append(Paragraph(f"<font color='{NAVY}' size='16'><b>QUOTATION</b></font>", styles["Title"]))
+
+    story.append(
+        Paragraph(
+            f"<b>{COMPANY['name']}</b><br/>"
+            f"{COMPANY['address']}<br/>"
+            f"Tel: {COMPANY['phone']} | Email: {COMPANY['email']} | Web: {COMPANY['website']}<br/>"
+            f"TRN: {COMPANY['trn']}",
+            styles["Normal"],
+        )
+    )
+
+    story.append(Spacer(1, 6 * mm))
+
+    info = [
+        ["Quote No", data["quote_no"], "Date", dt.date.today().strftime("%d-%b-%Y")],
+        ["Customer", data["customer_name"], "Validity", data.get("validity", "")],
+        ["Attention", data.get("attention_to", ""), "Email", data.get("customer_email", "")],
+        ["Mode", data["mode"], "Service", data["service"]],
+        ["Origin", data["origin"], "Destination", data["destination"]],
     ]
-    details_tbl = Table(details, colWidths=[27*mm, 58*mm, 27*mm, 58*mm])
-    details_tbl.setStyle(TableStyle([
-        ("BACKGROUND", (0,0), (-1,-1), colors.whitesmoke),
-        ("TEXTCOLOR", (0,0), (-1,-1), colors.HexColor(NAVY)),
-        ("FONTNAME", (0,0), (0,-1), "Helvetica-Bold"),
-        ("FONTNAME", (2,0), (2,-1), "Helvetica-Bold"),
-        ("GRID", (0,0), (-1,-1), 0.25, colors.lightgrey),
-        ("VALIGN", (0,0), (-1,-1), "TOP"),
-        ("FONTSIZE", (0,0), (-1,-1), 8),
-        ("LEADING", (0,0), (-1,-1), 10),
-    ]))
-    elements.append(details_tbl)
-    elements.append(Spacer(1, 5*mm))
 
-    if cargo_rows and len(cargo_rows) > 1:
-        elements.append(Paragraph("Cargo Details", styles["MVNormal"]))
-        cargo_tbl = Table(cargo_rows, colWidths=[28*mm, 40*mm, 25*mm, 25*mm, 25*mm, 30*mm] if enq.get("mode") != "Sea" else [38*mm, 22*mm, 35*mm, 78*mm])
-        cargo_tbl.setStyle(TableStyle([
-            ("BACKGROUND", (0,0), (-1,0), colors.HexColor(PINK)),
-            ("TEXTCOLOR", (0,0), (-1,0), colors.white),
-            ("FONTNAME", (0,0), (-1,0), "Helvetica-Bold"),
-            ("GRID", (0,0), (-1,-1), 0.25, colors.lightgrey),
-            ("FONTSIZE", (0,0), (-1,-1), 8),
-            ("ALIGN", (0,1), (-1,-1), "CENTER"),
-        ]))
-        elements.append(cargo_tbl)
-        elements.append(Spacer(1, 5*mm))
+    t = Table(info, colWidths=[25 * mm, 65 * mm, 25 * mm, 65 * mm])
+    t.setStyle(
+        TableStyle(
+            [
+                ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
+                ("BACKGROUND", (0, 0), (0, -1), colors.HexColor(NAVY)),
+                ("TEXTCOLOR", (0, 0), (0, -1), colors.white),
+                ("BACKGROUND", (2, 0), (2, -1), colors.HexColor(NAVY)),
+                ("TEXTCOLOR", (2, 0), (2, -1), colors.white),
+            ]
+        )
+    )
 
-    quote_data = [["Description", "Carrier", "Unit", "Unit Price", "VAT/Tax %", "Currency", "Total"]]
-    for l in lines:
-        if str(l.get("Description", "")).strip() or float(l.get("Unit Price", 0) or 0) > 0:
-            total = line_total(l)
-            quote_data.append([
-                str(l.get("Description", "")), str(l.get("Carrier", "")), fmt_money(l.get("Unit", 0)),
-                fmt_money(l.get("Unit Price", 0)), fmt_money(l.get("VAT/Tax %", 0)), str(l.get("Currency", "AED")), fmt_money(total)
-            ])
-    quote_tbl = Table(quote_data, colWidths=[45*mm, 28*mm, 16*mm, 24*mm, 20*mm, 18*mm, 25*mm])
-    quote_tbl.setStyle(TableStyle([
-        ("BACKGROUND", (0,0), (-1,0), colors.HexColor(NAVY)),
-        ("TEXTCOLOR", (0,0), (-1,0), colors.white),
-        ("FONTNAME", (0,0), (-1,0), "Helvetica-Bold"),
-        ("GRID", (0,0), (-1,-1), 0.25, colors.lightgrey),
-        ("FONTSIZE", (0,0), (-1,-1), 8),
-        ("ALIGN", (2,1), (-1,-1), "RIGHT"),
-        ("ALIGN", (5,1), (5,-1), "CENTER"),
-        ("VALIGN", (0,0), (-1,-1), "TOP"),
-    ]))
-    elements.append(quote_tbl)
-    elements.append(Spacer(1, 5*mm))
+    story.append(t)
+    story.append(Spacer(1, 5 * mm))
 
-    totals_rows = [["Currency", "Total"]] + [[cur, fmt_money(val)] for cur, val in totals_by_currency.items()]
-    totals_rows.append(["Total AED Equivalent", fmt_money(total_aed)])
-    totals_tbl = Table(totals_rows, colWidths=[50*mm, 45*mm], hAlign="RIGHT")
-    totals_tbl.setStyle(TableStyle([
-        ("BACKGROUND", (0,0), (-1,0), colors.HexColor(PINK)),
-        ("TEXTCOLOR", (0,0), (-1,0), colors.white),
-        ("FONTNAME", (0,0), (-1,0), "Helvetica-Bold"),
-        ("FONTNAME", (0,-1), (-1,-1), "Helvetica-Bold"),
-        ("BACKGROUND", (0,-1), (-1,-1), colors.HexColor("#FDE7F3")),
-        ("GRID", (0,0), (-1,-1), 0.25, colors.lightgrey),
-        ("ALIGN", (1,1), (1,-1), "RIGHT"),
-        ("FONTSIZE", (0,0), (-1,-1), 9),
-    ]))
-    elements.append(totals_tbl)
-    elements.append(Spacer(1, 5*mm))
+    cargo_rows = data.get("cargo_rows", [])
 
-    terms = enq.get("terms", "") or "Rates are subject to space/equipment availability and final carrier confirmation."
-    elements.append(Paragraph("<b>Terms & Conditions</b>", styles["MVNormal"]))
-    elements.append(Paragraph(terms.replace("\n", "<br/>"), styles["MVNormal"]))
-    elements.append(Spacer(1, 5*mm))
-    elements.append(Paragraph("Regards,<br/><b>Marvento Shipping LLC</b>", styles["MVNormal"]))
-    doc.build(elements)
-    buffer.seek(0)
-    return buffer.getvalue()
+    if cargo_rows:
+        story.append(Paragraph("<b>Cargo Details</b>", styles["Heading3"]))
 
+        if data["mode"] == "Sea":
+            if any(r.get("equipment") == "LCL" for r in cargo_rows):
+                cargo_table = [["Service", "CBM", "Packages", "Gross Weight KG", "Description"]]
+                for r in cargo_rows:
+                    if r.get("equipment") == "LCL":
+                        cargo_table.append(
+                            [
+                                "LCL",
+                                f"{r.get('cbm', 0):.3f}",
+                                r.get("packages", ""),
+                                f"{r.get('gross_weight', 0):,.2f}",
+                                r.get("description", ""),
+                            ]
+                        )
+                    else:
+                        cargo_table.append(
+                            [
+                                r.get("equipment", ""),
+                                "",
+                                r.get("qty", ""),
+                                f"{r.get('gross_weight', 0):,.2f}",
+                                r.get("description", ""),
+                            ]
+                        )
+            else:
+                cargo_table = [["Equipment", "Qty", "Gross Weight KG", "Description"]]
+                for r in cargo_rows:
+                    cargo_table.append(
+                        [
+                            r.get("equipment", ""),
+                            r.get("qty", ""),
+                            f"{r.get('gross_weight', 0):,.2f}",
+                            r.get("description", ""),
+                        ]
+                    )
 
-if "logged_in" not in st.session_state:
-    st.session_state.logged_in = False
-
-if not st.session_state.logged_in:
-    login()
-    st.stop()
-
-init_state()
-
-with st.sidebar:
-    if LOGO_FILE.exists():
-        st.image(str(LOGO_FILE), width=260)
-    st.success(f"Logged in as\n{APP_USER}")
-    if st.button("Logout"):
-        st.session_state.logged_in = False
-        st.rerun()
-    st.divider()
-    st.caption("Manual quotation version. Tariff and auto-rate functions removed.")
-
-header()
-st.divider()
-
-st.subheader("1. Enquiry Details")
-c1, c2, c3, c4 = st.columns(4)
-with c1:
-    quote_no = st.text_input("Quote / Enquiry No", value=f"MRD-{date.today().strftime('%Y%m%d')}-001")
-    customer = st.text_input("Customer")
-with c2:
-    mode = st.selectbox("Mode", ["Air", "Sea", "Courier", "Land"], index=1)
-    service = st.selectbox("Service Required / Incoterm", ["EXW", "FCA", "FOB", "CIF", "CPT", "DAP", "DDU", "DDP"])
-with c3:
-    origin_label = "POL" if mode == "Sea" else ("AOL" if mode == "Air" else "Origin")
-    dest_label = "POD" if mode == "Sea" else ("AOD" if mode == "Air" else "Destination")
-    origin = st.text_input(origin_label, value="Dubai")
-    destination = st.text_input(dest_label, value="")
-with c4:
-    quote_date = st.date_input("Quote Date", value=date.today())
-    validity = st.text_input("Rate Validity", value="15 Days")
-
-st.subheader("2. Cargo Details")
-st.caption("Use + Add cargo row for multiple packages/containers. AI extraction helps fill dimensions from email/PDF/TXT; please verify before quoting.")
-
-with st.expander("AI Cargo Extraction from email/PDF/document", expanded=False):
-    pasted = st.text_area("Paste customer email text here", height=120, placeholder="Paste email text with dimensions / weight here")
-    uploads = st.file_uploader("Upload PDF/TXT/CSV/email file", type=["pdf", "txt", "csv", "eml"], accept_multiple_files=True)
-    if st.button("Extract cargo details"):
-        combined = pasted or ""
-        for up in uploads or []:
-            combined += "\n" + extract_text_from_upload(up)
-        extracted = ai_extract_cargo_lines(combined)
-        if extracted:
-            st.session_state.cargo_lines = extracted
-            st.success(f"Extracted {len(extracted)} cargo row(s). Please verify dimensions and weight.")
-            st.rerun()
         else:
-            st.warning("Could not detect dimensions. Try text like: 2 pcs 120x80x60 cm, gross weight 450 kg. For screenshots, please paste the visible text or enter manually.")
+            cargo_table = [["Pcs", "Dimensions CM", "Gross KG", "CBM", "Chargeable KG"]]
+            for r in cargo_rows:
+                cargo_table.append(
+                    [
+                        r.get("pcs", ""),
+                        f"{r.get('l', 0)} x {r.get('w', 0)} x {r.get('h', 0)}",
+                        f"{r.get('gross_weight', 0):,.2f}",
+                        f"{r.get('cbm', 0):.3f}",
+                        f"{r.get('chargeable_weight', 0):,.2f}",
+                    ]
+                )
 
-if mode == "Sea":
-    if st.button("+ Add cargo row"):
-        st.session_state.sea_cargo_lines.append({"Equipment": "20DV", "Qty": 1, "Gross Weight KG": 0.0, "Cargo Details": ""})
-        st.rerun()
-    equipment_options = ["20DV", "40STD", "40HC", "40RF", "40 FR"]
-    hc1, hc2, hc3, hc4 = st.columns([1, .6, 1, 3])
-    with hc1: st.write("Equipment")
-    with hc2: st.write("Qty")
-    with hc3: st.write("Gross Weight KG")
-    with hc4: st.write("Cargo Details")
-    for i, cargo in enumerate(st.session_state.sea_cargo_lines):
-        cc1, cc2, cc3, cc4 = st.columns([1, .6, 1, 3])
-        with cc1:
-            cargo["Equipment"] = st.selectbox("Equipment", equipment_options, index=equipment_options.index(cargo.get("Equipment", "20DV")) if cargo.get("Equipment") in equipment_options else 0, key=f"eq_{i}", label_visibility="collapsed")
-        with cc2:
-            cargo["Qty"] = st.number_input("Qty", min_value=1, value=int(cargo.get("Qty", 1)), step=1, key=f"qty_{i}", label_visibility="collapsed")
-        with cc3:
-            cargo["Gross Weight KG"] = st.number_input("Gross Weight KG", min_value=0.0, value=float(cargo.get("Gross Weight KG", 0.0)), step=100.0, key=f"gw_sea_{i}", label_visibility="collapsed")
-        with cc4:
-            cargo["Cargo Details"] = st.text_input("Cargo Details", value=cargo.get("Cargo Details", ""), key=f"cd_sea_{i}", label_visibility="collapsed", placeholder="Commodity / remarks")
-else:
-    if st.button("+ Add cargo row"):
-        st.session_state.cargo_lines.append({"Pieces": 1, "Length CM": 0.0, "Width CM": 0.0, "Height CM": 0.0, "Gross Weight KG": 0.0, "Cargo Details": ""})
-        st.rerun()
-    hc1, hc2, hc3, hc4, hc5, hc6, hc7, hc8 = st.columns([.7, .9, .9, .9, 1, .8, .8, 2])
-    with hc1: st.write("Pieces")
-    with hc2: st.write("Length CM")
-    with hc3: st.write("Width CM")
-    with hc4: st.write("Height CM")
-    with hc5: st.write("Gross KG")
-    with hc6: st.write("CBM")
-    with hc7: st.write("Vol KG")
-    with hc8: st.write("Details")
-    for i, cargo in enumerate(st.session_state.cargo_lines):
-        c1, c2, c3, c4, c5, c6, c7, c8 = st.columns([.7, .9, .9, .9, 1, .8, .8, 2])
-        with c1:
-            cargo["Pieces"] = st.number_input("Pieces", min_value=0, value=int(cargo.get("Pieces", 1)), step=1, key=f"pcs_{i}", label_visibility="collapsed")
-        with c2:
-            cargo["Length CM"] = st.number_input("Length CM", min_value=0.0, value=float(cargo.get("Length CM", 0.0)), step=1.0, key=f"len_{i}", label_visibility="collapsed")
-        with c3:
-            cargo["Width CM"] = st.number_input("Width CM", min_value=0.0, value=float(cargo.get("Width CM", 0.0)), step=1.0, key=f"wid_{i}", label_visibility="collapsed")
-        with c4:
-            cargo["Height CM"] = st.number_input("Height CM", min_value=0.0, value=float(cargo.get("Height CM", 0.0)), step=1.0, key=f"hei_{i}", label_visibility="collapsed")
-        with c5:
-            cargo["Gross Weight KG"] = st.number_input("Gross Weight KG", min_value=0.0, value=float(cargo.get("Gross Weight KG", 0.0)), step=1.0, key=f"gw_{i}", label_visibility="collapsed")
-        with c6:
-            st.text_input("CBM", value=fmt_money(cargo_cbm(cargo)), disabled=True, key=f"cbm_{i}", label_visibility="collapsed")
-        with c7:
-            st.text_input("Vol KG", value=fmt_money(cargo_vol_kg(cargo, mode)), disabled=True, key=f"vol_{i}", label_visibility="collapsed")
-        with c8:
-            cargo["Cargo Details"] = st.text_input("Details", value=cargo.get("Cargo Details", ""), key=f"cd_{i}", label_visibility="collapsed", placeholder="Commodity / remarks")
-    st.metric("Total Chargeable Weight", f"{total_chargeable(st.session_state.cargo_lines, mode):,.2f} KG")
+        ct = Table(cargo_table, repeatRows=1)
+        ct.setStyle(
+            TableStyle(
+                [
+                    ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
+                    ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor(PINK)),
+                    ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                ]
+            )
+        )
 
-st.subheader("3. Manual Quote Lines")
-st.caption("Use Tab to move field-by-field: Description → Carrier → Unit → Unit Price → VAT/Tax → Currency → next row. No Enter button required.")
+        story.append(ct)
+        story.append(Spacer(1, 5 * mm))
 
-b1, b2, b3 = st.columns([1,1,5])
-with b1:
-    if st.button("+ Add line"):
-        st.session_state.quote_lines.append({"Description": "", "Carrier": "", "Unit": 1.0, "Unit Price": 0.0, "VAT/Tax %": 0.0, "Currency": "AED"})
-        st.rerun()
-with b2:
-    if st.button("Clear lines"):
-        st.session_state.quote_lines = [{"Description": "", "Carrier": "", "Unit": 1.0, "Unit Price": 0.0, "VAT/Tax %": 0.0, "Currency": "AED"}]
-        st.rerun()
+    story.append(Paragraph("<b>Charges</b>", styles["Heading3"]))
 
-qh = st.columns([2.6, 1.5, .75, 1.1, .85, .9, 1.05])
-for col, label in zip(qh, ["Description", "Carrier", "Unit", "Unit Price", "VAT/Tax %", "Currency", "Total"]):
-    with col:
-        st.write(label)
+    charges = [["Description", "Carrier", "Unit", "Unit Price", "VAT %", "Currency", "Total"]]
 
-currency_options = ["AED", "USD", "EUR", "SAR", "INR", "GBP", "CNY"]
-for i, line in enumerate(st.session_state.quote_lines):
-    cols = st.columns([2.6, 1.5, .75, 1.1, .85, .9, 1.05])
-    with cols[0]:
-        line["Description"] = st.text_input("Description", value=line.get("Description", ""), key=f"desc_{i}", label_visibility="collapsed", placeholder="Description")
-    with cols[1]:
-        line["Carrier"] = st.text_input("Carrier", value=line.get("Carrier", ""), key=f"carrier_{i}", label_visibility="collapsed", placeholder="Carrier")
-    with cols[2]:
-        line["Unit"] = st.number_input("Unit", min_value=0.0, value=float(line.get("Unit", 1.0)), step=1.0, key=f"unit_{i}", label_visibility="collapsed")
-    with cols[3]:
-        line["Unit Price"] = st.number_input("Unit Price", min_value=0.0, value=float(line.get("Unit Price", 0.0)), step=10.0, key=f"price_{i}", label_visibility="collapsed")
-    with cols[4]:
-        line["VAT/Tax %"] = st.number_input("VAT/Tax %", min_value=0.0, value=float(line.get("VAT/Tax %", 0.0)), step=1.0, key=f"vat_{i}", label_visibility="collapsed")
-    with cols[5]:
-        current_currency = line.get("Currency", "AED")
-        idx = currency_options.index(current_currency) if current_currency in currency_options else 0
-        line["Currency"] = st.selectbox("Currency", currency_options, index=idx, key=f"cur_{i}", label_visibility="collapsed")
-    with cols[6]:
-        st.text_input("Total", value=f"{line.get('Currency','AED')} {fmt_money(line_total(line))}", key=f"total_{i}", disabled=True, label_visibility="collapsed")
+    for r in data.get("lines", []):
+        charges.append(
+            [
+                r["description"],
+                r["carrier"],
+                r["unit"],
+                f"{r['unit_price']:,.2f}",
+                f"{r['vat']:,.2f}",
+                r["currency"],
+                f"{r['total']:,.2f}",
+            ]
+        )
 
-st.subheader("4. Selling Totals")
-rates = {"AED": 1.0, "USD": 3.6725, "EUR": 4.0, "SAR": 0.98, "INR": 0.044, "GBP": 4.7, "CNY": 0.51}
-with st.expander("Currency conversion to AED", expanded=False):
-    rc = st.columns(6)
-    for idx, cur in enumerate(["USD", "EUR", "SAR", "INR", "GBP", "CNY"]):
-        with rc[idx % 6]:
-            rates[cur] = st.number_input(f"1 {cur} = AED", value=float(rates[cur]), step=0.01, key=f"rate_{cur}")
+    tbl = Table(charges, repeatRows=1)
+    tbl.setStyle(
+        TableStyle(
+            [
+                ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor(NAVY)),
+                ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                ("ALIGN", (2, 1), (-1, -1), "RIGHT"),
+            ]
+        )
+    )
 
-totals_by_currency = {}
-for l in st.session_state.quote_lines:
-    if str(l.get("Description", "")).strip() or float(l.get("Unit Price", 0) or 0) > 0:
-        cur = l.get("Currency", "AED")
-        totals_by_currency[cur] = totals_by_currency.get(cur, 0.0) + line_total(l)
+    story.append(tbl)
+    story.append(Spacer(1, 4 * mm))
 
-total_aed = sum(v * rates.get(c, 1.0) for c, v in totals_by_currency.items())
-mc1, mc2, mc3 = st.columns(3)
-with mc1:
-    st.metric("Total Selling Quote - AED Equivalent", f"AED {total_aed:,.2f}")
-with mc2:
-    st.metric("Quote Lines", sum(1 for l in st.session_state.quote_lines if str(l.get("Description", "")).strip() or float(l.get("Unit Price", 0) or 0) > 0))
-with mc3:
-    st.metric("Mode", mode)
+    story.append(
+        Paragraph(
+            "<b>Total Selling Quote:</b> "
+            + " | ".join([f"{k} {v:,.2f}" for k, v in data.get("totals_by_currency", {}).items()]),
+            styles["Heading3"],
+        )
+    )
 
-if totals_by_currency:
-    st.write("Currency totals:")
-    st.dataframe(pd.DataFrame([{"Currency": k, "Total": round(v, 2), "AED Equivalent": round(v * rates.get(k, 1.0), 2)} for k, v in totals_by_currency.items()]), hide_index=True, use_container_width=True)
+    story.append(Spacer(1, 6 * mm))
 
-st.subheader("5. Prepared Quote Text")
-terms = st.text_area("Terms & Conditions", value="Rates are subject to space/equipment availability and final carrier confirmation.\nDuties/taxes, inspections, demurrage/detention, storage, and destination charges are excluded unless specifically mentioned.", height=90)
-quote_lines_text = "\n".join([f"- {l.get('Description','')}: {l.get('Currency','AED')} {fmt_money(line_total(l))}" for l in st.session_state.quote_lines if str(l.get("Description", "")).strip() or float(l.get("Unit Price", 0) or 0) > 0])
-if mode == "Sea":
-    cargo_text = "\n".join([f"- {c.get('Qty',1)} x {c.get('Equipment','')} | Gross Weight: {fmt_money(c.get('Gross Weight KG',0))} KG | {c.get('Cargo Details','')}" for c in st.session_state.sea_cargo_lines])
-else:
-    cargo_text = "\n".join([f"- {c.get('Pieces',1)} pcs | {fmt_money(c.get('Length CM',0))} x {fmt_money(c.get('Width CM',0))} x {fmt_money(c.get('Height CM',0))} cm | Gross: {fmt_money(c.get('Gross Weight KG',0))} KG | Vol: {fmt_money(cargo_vol_kg(c, mode))} KG" for c in st.session_state.cargo_lines])
-    cargo_text += f"\nChargeable Weight: {total_chargeable(st.session_state.cargo_lines, mode):,.2f} KG"
-quote_text = f"""Dear Customer,
+    story.append(
+        Paragraph(
+            "<b>Terms:</b> Subject to space, equipment availability, carrier acceptance and final cargo details. "
+            "Duties, taxes, demurrage, detention, storage and inspections are excluded unless specifically mentioned.",
+            styles["Normal"],
+        )
+    )
 
-Thank you for your enquiry.
+    story.append(Spacer(1, 6 * mm))
+    story.append(Paragraph("Regards,<br/><b>Marvento Shipping LLC</b>", styles["Normal"]))
 
-Please find our quotation below:
+    doc.build(story)
+    return buf.getvalue()
 
-Quote No: {quote_no}
-Customer: {customer}
-Mode: {mode}
-Service Term: {service}
-Origin: {origin}
-Destination: {destination}
-Validity: {validity}
 
-Cargo Details:
-{cargo_text}
+def dashboard():
+    st.subheader("Dashboard")
 
-Charges:
-{quote_lines_text}
+    customers_count = len(qdf("SELECT id FROM customers"))
+    enquiries_count = len(qdf("SELECT id FROM enquiries"))
+    quotes_count = len(qdf("SELECT id FROM quotes"))
+    won_count = len(qdf("SELECT id FROM quotes WHERE status='Won'"))
 
-Total AED Equivalent: AED {total_aed:,.2f}
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Customers", customers_count)
+    c2.metric("Enquiries", enquiries_count)
+    c3.metric("Quotes", quotes_count)
+    c4.metric("Won Quotes", won_count)
 
-Terms:
-{terms}
+    e_open = len(qdf("SELECT id FROM enquiries WHERE status='Open'"))
+    e_quoted = len(qdf("SELECT id FROM enquiries WHERE status='Quoted'"))
+    e_lost = len(qdf("SELECT id FROM enquiries WHERE status='Lost'"))
+    q_draft = len(qdf("SELECT id FROM quotes WHERE status='Draft'"))
 
-Regards,
-Marvento Shipping LLC
-{MARVENTO['phone']} | {MARVENTO['email']}
-"""
-st.text_area("Copy Quote Text", value=quote_text, height=320)
+    d1, d2, d3, d4 = st.columns(4)
+    d1.metric("Open Enquiries", e_open)
+    d2.metric("Quoted Enquiries", e_quoted)
+    d3.metric("Lost Enquiries", e_lost)
+    d4.metric("Draft Quotes", q_draft)
 
-enq = {"quote_no": quote_no, "quote_date": str(quote_date), "customer": customer, "validity": validity, "mode": mode, "service": service, "origin": origin, "destination": destination, "terms": terms}
-cargo_rows = cargo_summary_table(mode, st.session_state.cargo_lines, st.session_state.sea_cargo_lines)
-pdf_bytes = make_pdf(enq, st.session_state.quote_lines, totals_by_currency, total_aed, cargo_rows)
-dc1, dc2 = st.columns([1, 1])
-with dc1:
-    st.download_button("Download PDF Quotation", data=pdf_bytes, file_name=f"{quote_no}_Marvento_Quotation.pdf", mime="application/pdf")
-with dc2:
-    if st.button("Save Quote in App"):
-        saved_path = save_quote_pdf(enq, pdf_bytes, total_aed, totals_by_currency)
-        st.success(f"Quote saved: {saved_path.name}")
+    qjson = qdf("SELECT quote_json FROM quotes WHERE quote_json IS NOT NULL")
+    lcl_quotes = 0
+    fcl_quotes = 0
+    total_cbm = 0.0
+    total_containers = 0
 
-st.subheader("6. Saved Quotations")
-saved_quotes = list_saved_quotes()
-if not saved_quotes:
-    st.info("No saved quotations yet. Click 'Save Quote in App' after preparing a quote.")
-else:
-    search = st.text_input("Search saved quotes", placeholder="Quote no / customer / origin / destination")
-    filtered = saved_quotes
-    if search.strip():
-        q = search.strip().lower()
-        filtered = [x for x in saved_quotes if q in json.dumps(x).lower()]
-    st.caption("Saved quotation PDFs are stored in this Streamlit app workspace. Download copies for long-term records.")
-    for idx, item in enumerate(filtered[:50]):
-        cols = st.columns([1.2, 1.7, 1.2, 1.2, 1, 1.1])
-        with cols[0]:
-            st.write(item.get("quote_no", ""))
-        with cols[1]:
-            st.write(item.get("customer", ""))
-        with cols[2]:
-            st.write(f"{item.get('origin','')} → {item.get('destination','')}")
-        with cols[3]:
-            st.write(item.get("saved_at", ""))
-        with cols[4]:
-            st.write(f"AED {float(item.get('total_aed', 0)):,.2f}")
-        with cols[5]:
-            pdf_path = Path(item.get("_pdf_path", ""))
-            if pdf_path.exists():
-                st.download_button("Download", data=pdf_path.read_bytes(), file_name=pdf_path.name, mime="application/pdf", key=f"saved_dl_{idx}")
+    for _, row in qjson.iterrows():
+        try:
+            data = json.loads(row["quote_json"])
+            if data.get("mode") == "Sea":
+                has_lcl = False
+                has_fcl = False
+                for cr in data.get("cargo_rows", []):
+                    if cr.get("equipment") == "LCL":
+                        has_lcl = True
+                        total_cbm += float(cr.get("cbm", 0) or 0)
+                    else:
+                        has_fcl = True
+                        total_containers += int(cr.get("qty", 0) or 0)
+                if has_lcl:
+                    lcl_quotes += 1
+                if has_fcl:
+                    fcl_quotes += 1
+        except Exception:
+            pass
+
+    s1, s2, s3, s4 = st.columns(4)
+    s1.metric("Sea LCL Quotes", lcl_quotes)
+    s2.metric("Sea FCL Quotes", fcl_quotes)
+    s3.metric("Total CBM Quoted", f"{total_cbm:.2f}")
+    s4.metric("Total Containers Quoted", total_containers)
+
+    st.dataframe(
+        qdf(
+            "SELECT quote_no, customer_name, mode, origin, destination, total, currency, status, created_at "
+            "FROM quotes ORDER BY id DESC LIMIT 20"
+        ),
+        use_container_width=True,
+    )
+
+
+def customers_page():
+    st.subheader("Customer Database")
+
+    with st.expander("Add / Update Customer", expanded=True):
+        a, b = st.columns(2)
+        name = a.text_input("Customer Name")
+        contact = b.text_input("Contact Person")
+        email = a.text_input("Email")
+        phone = b.text_input("Phone")
+
+        c1, c2, c3 = st.columns(3)
+        country = c1.text_input("Country")
+        industry = c2.text_input("Industry")
+        trn = c3.text_input("Customer TRN")
+
+        address = st.text_area("Address")
+
+        c, d = st.columns(2)
+        credit = c.text_input("Credit Terms")
+        sales = d.text_input("Salesperson", value=st.session_state.get("name", ""))
+
+        if st.button("Save Customer") and name:
+            save_customer(name, contact, email, phone, address, credit, sales, country, industry, trn)
+            st.success("Customer saved")
+
+    st.dataframe(
+        qdf(
+            "SELECT name, contact_person, email, phone, country, industry, credit_terms, salesperson, created_at "
+            "FROM customers ORDER BY name"
+        ),
+        use_container_width=True,
+    )
+
+
+def enquiry_page():
+    st.subheader("Enquiry Database")
+
+    customers = customer_options()
+
+    with st.expander("Create Enquiry", expanded=True):
+        customer = st.selectbox("Customer", customers) if customers else st.text_input("Customer")
+
+        a, b, c = st.columns(3)
+        mode = a.selectbox("Mode", ["Air", "Sea", "Courier", "Land"])
+        service = b.selectbox("Service Required", ["EXW", "FCA", "FOB", "CIF", "CPT", "DAP", "DDU", "DDP"])
+        source = c.selectbox("Enquiry Source", ["Customer", "Agent", "Website", "WhatsApp", "Email", "Phone", "Referral"])
+
+        d, e = st.columns(2)
+        origin = d.text_input("AOL / POL / Origin")
+        dest = e.text_input("AOD / POD / Destination")
+
+        f, g, h = st.columns(3)
+        cargo_ready = f.date_input("Cargo Ready Date", value=dt.date.today())
+        follow_up = g.date_input("Follow Up Date", value=dt.date.today())
+        win_probability = h.slider("Win Probability %", 0, 100, 50)
+
+        salesperson = st.text_input("Salesperson", value=st.session_state.get("name", ""))
+
+        cargo = st.text_area("Cargo Summary")
+        status = st.selectbox("Status", ["Open", "Quoted", "Won", "Lost", "Cancelled"])
+
+        if st.button("Save Enquiry") and customer:
+            enq = next_no("ENQ", "enquiries", "enquiry_no")
+
+            cdb = conn()
+            cur = cdb.cursor()
+
+            cur.execute(
+                """INSERT INTO enquiries(
+                    enquiry_no, customer_name, mode, service, source, origin, destination,
+                    cargo_summary, status, salesperson, cargo_ready_date, follow_up_date,
+                    win_probability, created_at
+                )
+                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    enq,
+                    customer,
+                    mode,
+                    service,
+                    source,
+                    origin,
+                    dest,
+                    cargo,
+                    status,
+                    salesperson,
+                    str(cargo_ready),
+                    str(follow_up),
+                    win_probability,
+                    dt.datetime.now().isoformat(timespec="seconds"),
+                ),
+            )
+
+            cdb.commit()
+            cdb.close()
+
+            st.success(f"Enquiry saved: {enq}")
+
+    st.dataframe(
+        qdf(
+            "SELECT enquiry_no, customer_name, mode, service, source, origin, destination, status, "
+            "salesperson, cargo_ready_date, follow_up_date, win_probability, created_at "
+            "FROM enquiries ORDER BY id DESC"
+        ),
+        use_container_width=True,
+    )
+
+
+def quote_page():
+    st.subheader("Quotation Generator")
+
+    customers = customer_options()
+    enqs = qdf("SELECT enquiry_no, customer_name, mode, service, origin, destination FROM enquiries ORDER BY id DESC")
+
+    use_enq = st.checkbox("Create from existing enquiry")
+    selected = None
+
+    if use_enq and not enqs.empty:
+        enq_no = st.selectbox("Select Enquiry", enqs["enquiry_no"].tolist())
+        selected = enqs[enqs["enquiry_no"] == enq_no].iloc[0].to_dict()
+
+    customer = selected["customer_name"] if selected else (
+        st.selectbox("Customer", customers) if customers else st.text_input("Customer")
+    )
+
+    cust = get_customer(customer)
+
+    a, b, c, d = st.columns(4)
+
+    mode = a.selectbox(
+        "Mode",
+        ["Air", "Sea", "Courier", "Land"],
+        index=["Air", "Sea", "Courier", "Land"].index(selected["mode"]) if selected else 0,
+    )
+
+    service = b.selectbox(
+        "Service",
+        ["EXW", "FCA", "FOB", "CIF", "CPT", "DAP", "DDU", "DDP"],
+        index=["EXW", "FCA", "FOB", "CIF", "CPT", "DAP", "DDU", "DDP"].index(selected["service"])
+        if selected and selected["service"] in ["EXW", "FCA", "FOB", "CIF", "CPT", "DAP", "DDU", "DDP"]
+        else 0,
+    )
+
+    origin = c.text_input("AOL/POL/Origin", value=selected["origin"] if selected else "")
+    dest = d.text_input("AOD/POD/Destination", value=selected["destination"] if selected else "")
+
+    e, f, g = st.columns(3)
+    attention_to = e.text_input("Attention To", value=cust.get("contact_person", "") if cust else "")
+    customer_email = f.text_input("Customer Email", value=cust.get("email", "") if cust else "")
+    customer_phone = g.text_input("Customer Phone", value=cust.get("phone", "") if cust else "")
+
+    validity = st.text_input("Rate Validity", value="15 days")
+
+    ai_cargo_upload_section()
+
+    cargo_rows = cargo_section(mode)
+
+    lines, totals = quote_lines_section()
+
+    quote_no = next_no("MQ", "quotes", "quote_no")
+
+    if lines:
+        primary_currency = list(totals.keys())[0]
+        primary_total = totals[primary_currency]
+    else:
+        primary_currency = "AED"
+        primary_total = 0.0
+
+    data = {
+        "quote_no": quote_no,
+        "customer_name": customer,
+        "attention_to": attention_to,
+        "customer_email": customer_email,
+        "customer_phone": customer_phone,
+        "mode": mode,
+        "service": service,
+        "origin": origin,
+        "destination": dest,
+        "validity": validity,
+        "cargo_rows": cargo_rows,
+        "lines": lines,
+        "totals_by_currency": totals,
+    }
+
+    pdf = make_pdf(data) if customer and lines else None
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        if pdf:
+            st.download_button(
+                "Download PDF Quotation",
+                data=pdf,
+                file_name=f"{quote_no}.pdf",
+                mime="application/pdf",
+                use_container_width=True,
+            )
+
+    with col2:
+        if st.button("Save Quote in Database", use_container_width=True, disabled=not bool(pdf)):
+            cdb = conn()
+            cur = cdb.cursor()
+
+            cur.execute(
+                """INSERT INTO quotes(
+                    quote_no, enquiry_no, customer_name, mode, origin, destination,
+                    service, validity, currency, total, status, salesperson,
+                    quote_json, pdf, created_at
+                )
+                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    quote_no,
+                    selected["enquiry_no"] if selected else "",
+                    customer,
+                    mode,
+                    origin,
+                    dest,
+                    service,
+                    validity,
+                    primary_currency,
+                    primary_total,
+                    "Draft",
+                    st.session_state.get("name", ""),
+                    json.dumps(data),
+                    pdf,
+                    dt.datetime.now().isoformat(timespec="seconds"),
+                ),
+            )
+
+            cdb.commit()
+            cdb.close()
+
+            st.success(f"Quote saved: {quote_no}")
+
+
+def saved_quotes_page():
+    st.subheader("Saved Quotations")
+
+    search = st.text_input("Search customer / quote number")
+
+    if search:
+        df = qdf(
+            "SELECT id, quote_no, customer_name, mode, origin, destination, total, currency, status, created_at "
+            "FROM quotes WHERE quote_no LIKE ? OR customer_name LIKE ? ORDER BY id DESC",
+            (f"%{search}%", f"%{search}%"),
+        )
+    else:
+        df = qdf(
+            "SELECT id, quote_no, customer_name, mode, origin, destination, total, currency, status, created_at "
+            "FROM quotes ORDER BY id DESC"
+        )
+
+    st.dataframe(df.drop(columns=["id"]) if not df.empty else df, use_container_width=True)
+
+    if not df.empty:
+        qn = st.selectbox("Select quote to download", df["quote_no"].tolist())
+        row = df[df["quote_no"] == qn].iloc[0]
+
+        cdb = conn()
+        cur = cdb.cursor()
+        cur.execute("SELECT pdf FROM quotes WHERE id=?", (int(row["id"]),))
+        pdf = cur.fetchone()[0]
+        cdb.close()
+
+        st.download_button("Re-download Saved PDF", data=pdf, file_name=f"{qn}.pdf", mime="application/pdf")
+
+
+def main():
+    init_db()
+
+    if not login():
+        return
+
+    col1, col2 = st.columns([5, 1])
+
+    with col1:
+        add_logo(220)
+        st.caption(f"Logged in as {st.session_state.name} | Role: {st.session_state.role}")
+
+    with col2:
+        if st.button("Logout"):
+            st.session_state.clear()
+            st.rerun()
+
+    tabs = st.tabs(["Dashboard", "Customers", "Enquiries", "Create Quote", "Saved Quotes"])
+
+    with tabs[0]:
+        dashboard()
+
+    with tabs[1]:
+        customers_page()
+
+    with tabs[2]:
+        enquiry_page()
+
+    with tabs[3]:
+        quote_page()
+
+    with tabs[4]:
+        saved_quotes_page()
+
+
+if __name__ == "__main__":
+    main()
