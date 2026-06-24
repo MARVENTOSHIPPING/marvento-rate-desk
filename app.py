@@ -384,11 +384,12 @@ def quote_lines_section():
     if "line_rows" not in st.session_state:
         st.session_state.line_rows = 4
 
-    if st.button("+ Add Quote Line", key="add_quote_line_button"):
-        st.session_state.line_rows += 1
-        st.rerun()
+   
 
     lines = []
+    if st.button("+ Add Quote Line", key="add_quote_line_button"):
+    st.session_state.line_rows += 1
+    st.rerun()
     totals_by_currency = {}
 
     for i in range(st.session_state.line_rows):
