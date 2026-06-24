@@ -169,10 +169,10 @@ def login():
     with col2:
         add_logo(260)
         st.subheader("Rate Desk Pro Login")
-        u = st.text_input("Username")
-        p = st.text_input("Password", type="password")
+        u = st.text_input("Username", key="login_username")
+        p = st.text_input("Password", type="password", key="login_password")
 
-        if st.button("Login", use_container_width=True):
+        if st.button("Login", use_container_width=True, key="login_button"):
             if u in USERS and USERS[u]["password"] == p:
                 st.session_state.logged_in = True
                 st.session_state.user = u
@@ -243,6 +243,7 @@ def ai_cargo_upload_section():
     cargo_file = st.file_uploader(
         "Upload packing list / customer PDF / screenshot",
         type=["pdf", "png", "jpg", "jpeg"],
+        key="ai_cargo_file_uploader",
     )
 
     if cargo_file:
@@ -270,7 +271,7 @@ def cargo_section(mode):
     if "cargo_rows" not in st.session_state:
         st.session_state.cargo_rows = 1
 
-    if st.button("+ Add Cargo Row"):
+    if st.button("+ Add Cargo Row", key="add_cargo_row_button"):
         st.session_state.cargo_rows += 1
         st.rerun()
 
@@ -288,7 +289,7 @@ def cargo_section(mode):
             eq = a.selectbox(
                 "Equipment",
                 ["LCL", "20DV", "40STD", "40HC", "40RF", "40FR", "45HC"],
-                key=f"eq_{i}",
+                key=f"sea_equipment_{i}",
             )
 
             if eq == "LCL":
@@ -311,9 +312,9 @@ def cargo_section(mode):
                 )
 
             else:
-                qty = b.number_input("Container Qty", min_value=1, value=1, key=f"eq_qty_{i}")
-                gw = c.number_input("Gross Weight KG", min_value=0.0, value=0.0, key=f"sea_gw_{i}")
-                desc = e.text_input("Cargo Description", key=f"sea_desc_{i}")
+                qty = b.number_input("Container Qty", min_value=1, value=1, key=f"sea_container_qty_{i}")
+                gw = c.number_input("Gross Weight KG", min_value=0.0, value=0.0, key=f"sea_fcl_gw_{i}")
+                desc = e.text_input("Cargo Description", key=f"sea_fcl_desc_{i}")
 
                 total_containers += qty
                 total_gw += gw
@@ -340,11 +341,11 @@ def cargo_section(mode):
             st.markdown(f"Cargo Row {i + 1}")
             a, b, c, d, e, f, g = st.columns([0.8, 1, 1, 1, 1, 1, 1])
 
-            pcs = a.number_input("Pcs", min_value=1, value=1, key=f"pcs_{i}")
-            l = b.number_input("L cm", min_value=0.0, value=0.0, key=f"l_{i}")
-            w = c.number_input("W cm", min_value=0.0, value=0.0, key=f"w_{i}")
-            h = d.number_input("H cm", min_value=0.0, value=0.0, key=f"h_{i}")
-            gw = e.number_input("Gross KG", min_value=0.0, value=0.0, key=f"gw_{i}")
+            pcs = a.number_input("Pcs", min_value=1, value=1, key=f"air_pcs_{i}")
+            l = b.number_input("L cm", min_value=0.0, value=0.0, key=f"air_l_{i}")
+            w = c.number_input("W cm", min_value=0.0, value=0.0, key=f"air_w_{i}")
+            h = d.number_input("H cm", min_value=0.0, value=0.0, key=f"air_h_{i}")
+            gw = e.number_input("Gross KG", min_value=0.0, value=0.0, key=f"air_gw_{i}")
 
             cbm = (l * w * h * pcs) / 1_000_000 if l and w and h else 0.0
             divisor = 6000
@@ -383,7 +384,7 @@ def quote_lines_section():
     if "line_rows" not in st.session_state:
         st.session_state.line_rows = 4
 
-    if st.button("+ Add Quote Line"):
+    if st.button("+ Add Quote Line", key="add_quote_line_button"):
         st.session_state.line_rows += 1
         st.rerun()
 
@@ -394,12 +395,12 @@ def quote_lines_section():
         st.markdown(f"Line {i + 1}")
         c1, c2, c3, c4, c5, c6, c7 = st.columns([2.2, 1.4, 0.8, 1.1, 0.8, 0.9, 1.2])
 
-        desc = c1.text_input("Description", key=f"desc_{i}")
-        carrier = c2.text_input("Carrier", key=f"carrier_{i}")
-        unit = c3.number_input("Unit", min_value=0.0, value=0.0, key=f"unit_{i}")
-        price = c4.number_input("Unit Price", min_value=0.0, value=0.0, key=f"price_{i}")
-        vat = c5.number_input("VAT %", min_value=0.0, value=0.0, key=f"vat_{i}")
-        curr = c6.selectbox("Currency", ["AED", "USD", "EUR", "SAR", "INR", "GBP", "CNY"], key=f"curr_{i}")
+        desc = c1.text_input("Description", key=f"quote_desc_{i}")
+        carrier = c2.text_input("Carrier", key=f"quote_carrier_{i}")
+        unit = c3.number_input("Unit", min_value=0.0, value=0.0, key=f"quote_unit_{i}")
+        price = c4.number_input("Unit Price", min_value=0.0, value=0.0, key=f"quote_price_{i}")
+        vat = c5.number_input("VAT %", min_value=0.0, value=0.0, key=f"quote_vat_{i}")
+        curr = c6.selectbox("Currency", ["AED", "USD", "EUR", "SAR", "INR", "GBP", "CNY"], key=f"quote_curr_{i}")
 
         total = unit * price * (1 + vat / 100)
         c7.metric("Total", f"{curr} {total:,.2f}")
@@ -611,59 +612,17 @@ def make_pdf(data):
 def dashboard():
     st.subheader("Dashboard")
 
-    customers_count = len(qdf("SELECT id FROM customers"))
-    enquiries_count = len(qdf("SELECT id FROM enquiries"))
-    quotes_count = len(qdf("SELECT id FROM quotes"))
-    won_count = len(qdf("SELECT id FROM quotes WHERE status='Won'"))
-
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Customers", customers_count)
-    c2.metric("Enquiries", enquiries_count)
-    c3.metric("Quotes", quotes_count)
-    c4.metric("Won Quotes", won_count)
-
-    e_open = len(qdf("SELECT id FROM enquiries WHERE status='Open'"))
-    e_quoted = len(qdf("SELECT id FROM enquiries WHERE status='Quoted'"))
-    e_lost = len(qdf("SELECT id FROM enquiries WHERE status='Lost'"))
-    q_draft = len(qdf("SELECT id FROM quotes WHERE status='Draft'"))
+    c1.metric("Customers", len(qdf("SELECT id FROM customers")))
+    c2.metric("Enquiries", len(qdf("SELECT id FROM enquiries")))
+    c3.metric("Quotes", len(qdf("SELECT id FROM quotes")))
+    c4.metric("Won Quotes", len(qdf("SELECT id FROM quotes WHERE status='Won'")))
 
     d1, d2, d3, d4 = st.columns(4)
-    d1.metric("Open Enquiries", e_open)
-    d2.metric("Quoted Enquiries", e_quoted)
-    d3.metric("Lost Enquiries", e_lost)
-    d4.metric("Draft Quotes", q_draft)
-
-    qjson = qdf("SELECT quote_json FROM quotes WHERE quote_json IS NOT NULL")
-    lcl_quotes = 0
-    fcl_quotes = 0
-    total_cbm = 0.0
-    total_containers = 0
-
-    for _, row in qjson.iterrows():
-        try:
-            data = json.loads(row["quote_json"])
-            if data.get("mode") == "Sea":
-                has_lcl = False
-                has_fcl = False
-                for cr in data.get("cargo_rows", []):
-                    if cr.get("equipment") == "LCL":
-                        has_lcl = True
-                        total_cbm += float(cr.get("cbm", 0) or 0)
-                    else:
-                        has_fcl = True
-                        total_containers += int(cr.get("qty", 0) or 0)
-                if has_lcl:
-                    lcl_quotes += 1
-                if has_fcl:
-                    fcl_quotes += 1
-        except Exception:
-            pass
-
-    s1, s2, s3, s4 = st.columns(4)
-    s1.metric("Sea LCL Quotes", lcl_quotes)
-    s2.metric("Sea FCL Quotes", fcl_quotes)
-    s3.metric("Total CBM Quoted", f"{total_cbm:.2f}")
-    s4.metric("Total Containers Quoted", total_containers)
+    d1.metric("Open Enquiries", len(qdf("SELECT id FROM enquiries WHERE status='Open'")))
+    d2.metric("Quoted Enquiries", len(qdf("SELECT id FROM enquiries WHERE status='Quoted'")))
+    d3.metric("Lost Enquiries", len(qdf("SELECT id FROM enquiries WHERE status='Lost'")))
+    d4.metric("Draft Quotes", len(qdf("SELECT id FROM quotes WHERE status='Draft'")))
 
     st.dataframe(
         qdf(
@@ -679,23 +638,23 @@ def customers_page():
 
     with st.expander("Add / Update Customer", expanded=True):
         a, b = st.columns(2)
-        name = a.text_input("Customer Name")
-        contact = b.text_input("Contact Person")
-        email = a.text_input("Email")
-        phone = b.text_input("Phone")
+        name = a.text_input("Customer Name", key="customer_name_input")
+        contact = b.text_input("Contact Person", key="customer_contact_input")
+        email = a.text_input("Email", key="customer_email_input")
+        phone = b.text_input("Phone", key="customer_phone_input")
 
         c1, c2, c3 = st.columns(3)
-        country = c1.text_input("Country")
-        industry = c2.text_input("Industry")
-        trn = c3.text_input("Customer TRN")
+        country = c1.text_input("Country", key="customer_country_input")
+        industry = c2.text_input("Industry", key="customer_industry_input")
+        trn = c3.text_input("Customer TRN", key="customer_trn_input")
 
-        address = st.text_area("Address")
+        address = st.text_area("Address", key="customer_address_input")
 
         c, d = st.columns(2)
-        credit = c.text_input("Credit Terms")
-        sales = d.text_input("Salesperson", value=st.session_state.get("name", ""))
+        credit = c.text_input("Credit Terms", key="customer_credit_input")
+        sales = d.text_input("Salesperson", value=st.session_state.get("name", ""), key="customer_salesperson_input")
 
-        if st.button("Save Customer") and name:
+        if st.button("Save Customer", key="save_customer_button") and name:
             save_customer(name, contact, email, phone, address, credit, sales, country, industry, trn)
             st.success("Customer saved")
 
@@ -714,28 +673,32 @@ def enquiry_page():
     customers = customer_options()
 
     with st.expander("Create Enquiry", expanded=True):
-        customer = st.selectbox("Customer", customers) if customers else st.text_input("Customer")
+        customer = (
+            st.selectbox("Customer", customers, key="enquiry_customer_select")
+            if customers
+            else st.text_input("Customer", key="enquiry_customer_text")
+        )
 
         a, b, c = st.columns(3)
-        mode = a.selectbox("Mode", ["Air", "Sea", "Courier", "Land"])
-        service = b.selectbox("Service Required", ["EXW", "FCA", "FOB", "CIF", "CPT", "DAP", "DDU", "DDP"])
-        source = c.selectbox("Enquiry Source", ["Customer", "Agent", "Website", "WhatsApp", "Email", "Phone", "Referral"])
+        mode = a.selectbox("Mode", ["Air", "Sea", "Courier", "Land"], key="enquiry_mode_select")
+        service = b.selectbox("Service Required", ["EXW", "FCA", "FOB", "CIF", "CPT", "DAP", "DDU", "DDP"], key="enquiry_service_select")
+        source = c.selectbox("Enquiry Source", ["Customer", "Agent", "Website", "WhatsApp", "Email", "Phone", "Referral"], key="enquiry_source_select")
 
         d, e = st.columns(2)
-        origin = d.text_input("AOL / POL / Origin")
-        dest = e.text_input("AOD / POD / Destination")
+        origin = d.text_input("AOL / POL / Origin", key="enquiry_origin_input")
+        dest = e.text_input("AOD / POD / Destination", key="enquiry_destination_input")
 
         f, g, h = st.columns(3)
-        cargo_ready = f.date_input("Cargo Ready Date", value=dt.date.today())
-        follow_up = g.date_input("Follow Up Date", value=dt.date.today())
-        win_probability = h.slider("Win Probability %", 0, 100, 50)
+        cargo_ready = f.date_input("Cargo Ready Date", value=dt.date.today(), key="enquiry_cargo_ready_date")
+        follow_up = g.date_input("Follow Up Date", value=dt.date.today(), key="enquiry_follow_up_date")
+        win_probability = h.slider("Win Probability %", 0, 100, 50, key="enquiry_win_probability")
 
-        salesperson = st.text_input("Salesperson", value=st.session_state.get("name", ""))
+        salesperson = st.text_input("Salesperson", value=st.session_state.get("name", ""), key="enquiry_salesperson_input")
 
-        cargo = st.text_area("Cargo Summary")
-        status = st.selectbox("Status", ["Open", "Quoted", "Won", "Lost", "Cancelled"])
+        cargo = st.text_area("Cargo Summary", key="enquiry_cargo_summary")
+        status = st.selectbox("Status", ["Open", "Quoted", "Won", "Lost", "Cancelled"], key="enquiry_status_select")
 
-        if st.button("Save Enquiry") and customer:
+        if st.button("Save Enquiry", key="save_enquiry_button") and customer:
             enq = next_no("ENQ", "enquiries", "enquiry_no")
 
             cdb = conn()
@@ -787,44 +750,37 @@ def quote_page():
     customers = customer_options()
     enqs = qdf("SELECT enquiry_no, customer_name, mode, service, origin, destination FROM enquiries ORDER BY id DESC")
 
-    use_enq = st.checkbox("Create from existing enquiry")
+    use_enq = st.checkbox("Create from existing enquiry", key="quote_use_existing_enquiry")
     selected = None
 
     if use_enq and not enqs.empty:
-        enq_no = st.selectbox("Select Enquiry", enqs["enquiry_no"].tolist())
+        enq_no = st.selectbox("Select Enquiry", enqs["enquiry_no"].tolist(), key="quote_enquiry_select")
         selected = enqs[enqs["enquiry_no"] == enq_no].iloc[0].to_dict()
 
     customer = selected["customer_name"] if selected else (
-        st.selectbox("Customer", customers) if customers else st.text_input("Customer")
+        st.selectbox("Customer", customers, key="quote_customer_select") if customers else st.text_input("Customer", key="quote_customer_text")
     )
 
     cust = get_customer(customer)
 
     a, b, c, d = st.columns(4)
 
-    mode = a.selectbox(
-        "Mode",
-        ["Air", "Sea", "Courier", "Land"],
-        index=["Air", "Sea", "Courier", "Land"].index(selected["mode"]) if selected else 0,
-    )
+    mode_index = ["Air", "Sea", "Courier", "Land"].index(selected["mode"]) if selected else 0
+    mode = a.selectbox("Mode", ["Air", "Sea", "Courier", "Land"], index=mode_index, key="quote_mode_select")
 
-    service = b.selectbox(
-        "Service",
-        ["EXW", "FCA", "FOB", "CIF", "CPT", "DAP", "DDU", "DDP"],
-        index=["EXW", "FCA", "FOB", "CIF", "CPT", "DAP", "DDU", "DDP"].index(selected["service"])
-        if selected and selected["service"] in ["EXW", "FCA", "FOB", "CIF", "CPT", "DAP", "DDU", "DDP"]
-        else 0,
-    )
+    service_options = ["EXW", "FCA", "FOB", "CIF", "CPT", "DAP", "DDU", "DDP"]
+    service_index = service_options.index(selected["service"]) if selected and selected["service"] in service_options else 0
+    service = b.selectbox("Service", service_options, index=service_index, key="quote_service_select")
 
-    origin = c.text_input("AOL/POL/Origin", value=selected["origin"] if selected else "")
-    dest = d.text_input("AOD/POD/Destination", value=selected["destination"] if selected else "")
+    origin = c.text_input("AOL/POL/Origin", value=selected["origin"] if selected else "", key="quote_origin_input")
+    dest = d.text_input("AOD/POD/Destination", value=selected["destination"] if selected else "", key="quote_destination_input")
 
     e, f, g = st.columns(3)
-    attention_to = e.text_input("Attention To", value=cust.get("contact_person", "") if cust else "")
-    customer_email = f.text_input("Customer Email", value=cust.get("email", "") if cust else "")
-    customer_phone = g.text_input("Customer Phone", value=cust.get("phone", "") if cust else "")
+    attention_to = e.text_input("Attention To", value=cust.get("contact_person", "") if cust else "", key="quote_attention_input")
+    customer_email = f.text_input("Customer Email", value=cust.get("email", "") if cust else "", key="quote_email_input")
+    customer_phone = g.text_input("Customer Phone", value=cust.get("phone", "") if cust else "", key="quote_phone_input")
 
-    validity = st.text_input("Rate Validity", value="15 days")
+    validity = st.text_input("Rate Validity", value="15 days", key="quote_validity_input")
 
     ai_cargo_upload_section()
 
@@ -834,12 +790,8 @@ def quote_page():
 
     quote_no = next_no("MQ", "quotes", "quote_no")
 
-    if lines:
-        primary_currency = list(totals.keys())[0]
-        primary_total = totals[primary_currency]
-    else:
-        primary_currency = "AED"
-        primary_total = 0.0
+    primary_currency = list(totals.keys())[0] if lines else "AED"
+    primary_total = totals[primary_currency] if lines else 0.0
 
     data = {
         "quote_no": quote_no,
@@ -869,10 +821,11 @@ def quote_page():
                 file_name=f"{quote_no}.pdf",
                 mime="application/pdf",
                 use_container_width=True,
+                key="download_pdf_quote_button",
             )
 
     with col2:
-        if st.button("Save Quote in Database", use_container_width=True, disabled=not bool(pdf)):
+        if st.button("Save Quote in Database", use_container_width=True, disabled=not bool(pdf), key="save_quote_button"):
             cdb = conn()
             cur = cdb.cursor()
 
@@ -911,7 +864,7 @@ def quote_page():
 def saved_quotes_page():
     st.subheader("Saved Quotations")
 
-    search = st.text_input("Search customer / quote number")
+    search = st.text_input("Search customer / quote number", key="saved_quote_search")
 
     if search:
         df = qdf(
@@ -928,7 +881,7 @@ def saved_quotes_page():
     st.dataframe(df.drop(columns=["id"]) if not df.empty else df, use_container_width=True)
 
     if not df.empty:
-        qn = st.selectbox("Select quote to download", df["quote_no"].tolist())
+        qn = st.selectbox("Select quote to download", df["quote_no"].tolist(), key="saved_quote_select")
         row = df[df["quote_no"] == qn].iloc[0]
 
         cdb = conn()
@@ -937,7 +890,7 @@ def saved_quotes_page():
         pdf = cur.fetchone()[0]
         cdb.close()
 
-        st.download_button("Re-download Saved PDF", data=pdf, file_name=f"{qn}.pdf", mime="application/pdf")
+        st.download_button("Re-download Saved PDF", data=pdf, file_name=f"{qn}.pdf", mime="application/pdf", key="saved_quote_download_button")
 
 
 def main():
@@ -953,7 +906,7 @@ def main():
         st.caption(f"Logged in as {st.session_state.name} | Role: {st.session_state.role}")
 
     with col2:
-        if st.button("Logout"):
+        if st.button("Logout", key="logout_button"):
             st.session_state.clear()
             st.rerun()
 
