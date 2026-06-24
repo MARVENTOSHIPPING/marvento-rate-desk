@@ -378,7 +378,7 @@ def cargo_section(mode):
     return rows
 
 
-def quote_lines_section(exchange_rate=3.685):    
+def quote_lines_section(exchange_rate=3.675):
     st.markdown("#### Manual Quote Lines")
 
     if "line_rows" not in st.session_state:
@@ -388,7 +388,6 @@ def quote_lines_section(exchange_rate=3.685):
     totals_by_currency = {}
     total_aed_equivalent = 0.0
 
-    # Header only once
     h1, h2, h3, h4, h5, h6, h7, h8 = st.columns(
         [2.0, 1.3, 0.8, 1.0, 0.8, 0.8, 1.0, 1.8]
     )
@@ -408,70 +407,24 @@ def quote_lines_section(exchange_rate=3.685):
             [2.0, 1.3, 0.8, 1.0, 0.8, 0.8, 1.0, 1.8]
         )
 
-        desc = c1.text_input(
-            "Description",
-            key=f"quote_desc_{i}",
-            label_visibility="collapsed"
-        )
-
-        carrier = c2.text_input(
-            "Carrier",
-            key=f"quote_carrier_{i}",
-            label_visibility="collapsed"
-        )
-
-        unit = c3.number_input(
-            "Unit",
-            min_value=0.0,
-            value=0.0,
-            step=1.0,
-            key=f"quote_unit_{i}",
-            label_visibility="collapsed"
-        )
-
-        price = c4.number_input(
-            "Unit Price",
-            min_value=0.0,
-            value=0.0,
-            step=1.0,
-            key=f"quote_price_{i}",
-            label_visibility="collapsed"
-        )
-
-        vat = c5.number_input(
-            "VAT %",
-            min_value=0.0,
-            value=0.0,
-            step=1.0,
-            key=f"quote_vat_{i}",
-            label_visibility="collapsed"
-        )
-
-        curr = c6.selectbox(
-            "Currency",
-            ["AED", "USD", "EUR", "SAR", "INR", "GBP", "CNY"],
-            key=f"quote_curr_{i}",
-            label_visibility="collapsed"
-        )
+        desc = c1.text_input("Description", key=f"quote_desc_{i}", label_visibility="collapsed")
+        carrier = c2.text_input("Carrier", key=f"quote_carrier_{i}", label_visibility="collapsed")
+        unit = c3.number_input("Unit", min_value=0.0, value=0.0, step=1.0, key=f"quote_unit_{i}", label_visibility="collapsed")
+        price = c4.number_input("Unit Price", min_value=0.0, value=0.0, step=1.0, key=f"quote_price_{i}", label_visibility="collapsed")
+        vat = c5.number_input("VAT %", min_value=0.0, value=0.0, step=1.0, key=f"quote_vat_{i}", label_visibility="collapsed")
+        curr = c6.selectbox("Currency", ["AED", "USD", "EUR", "SAR", "INR", "GBP", "CNY"], key=f"quote_curr_{i}", label_visibility="collapsed")
 
         total = unit * price
         total = total + (total * vat / 100)
 
         aed_value = total * exchange_rate
 
-        c7.text_input(
-            "Total",
-            value=f"{total:,.2f}",
-            key=f"quote_total_display_{i}",
-            disabled=True,
-            label_visibility="collapsed"
+        c7.markdown(
+            f"<div style='background:#eef1f5; padding:14px; border-radius:8px;'>{total:,.2f}</div>",
+            unsafe_allow_html=True
         )
 
-        remarks = c8.text_input(
-            "Remarks",
-            key=f"quote_remarks_{i}",
-            label_visibility="collapsed"
-        )
+        remarks = c8.text_input("Remarks", key=f"quote_remarks_{i}", label_visibility="collapsed")
 
         if desc or carrier or unit > 0 or price > 0 or remarks:
             lines.append(
