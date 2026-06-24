@@ -934,7 +934,7 @@ def enquiry_page():
 
 def quote_page():
     st.subheader("Quotation Generator")
-
+    
     customers = customer_options()
 
     enqs = qdf(
@@ -963,21 +963,35 @@ def quote_page():
         st.success(f"Loaded enquiry: {selected['enquiry_no']}")
 
     if selected:
-        customer = selected.get("customer_name", "")
+       if selected:
+    customer = selected.get("customer_name", "")
+    walk_in = False
+else:
+    walk_in = st.checkbox(
+        "Walk-in Customer",
+        key="quote_walk_in_customer"
+    )
+
+    if walk_in:
+        customer = st.text_input(
+            "Walk-in Customer Name",
+            key="quote_walk_in_customer_name"
+        )
     else:
-        if customers:
-            customer = st.selectbox(
+        customer = (
+            st.selectbox(
                 "Customer",
                 customers,
                 key="quote_customer_select"
             )
-        else:
-            customer = st.text_input(
+            if customers
+            else st.text_input(
                 "Customer",
                 key="quote_customer_text"
             )
+        )
 
-    cust = get_customer(customer)
+cust = get_customer(customer) if not walk_in else {}
 
     mode_options = ["Air", "Sea", "Courier", "Land"]
     service_options = ["EXW", "FCA", "FOB", "CIF", "CPT", "DAP", "DDU", "DDP"]
