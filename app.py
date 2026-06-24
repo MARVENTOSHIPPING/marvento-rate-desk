@@ -384,17 +384,15 @@ def quote_lines_section():
     if "line_rows" not in st.session_state:
         st.session_state.line_rows = 4
 
-   
-
     lines = []
-    if st.button("+ Add Quote Line", key="add_quote_line_button"):
-       st.session_state.line_rows += 1
-       st.rerun()
-       totals_by_currency = {}
+    totals_by_currency = {}
 
     for i in range(st.session_state.line_rows):
         st.markdown(f"Line {i + 1}")
-        c1, c2, c3, c4, c5, c6, c7 = st.columns([2.2, 1.4, 0.8, 1.1, 0.8, 0.9, 1.2])
+
+        c1, c2, c3, c4, c5, c6, c7, c8 = st.columns(
+            [2.0, 1.2, 0.7, 1.0, 0.7, 0.8, 1.0, 1.6]
+        )
 
         desc = c1.text_input("Description", key=f"quote_desc_{i}")
         carrier = c2.text_input("Carrier", key=f"quote_carrier_{i}")
@@ -404,9 +402,11 @@ def quote_lines_section():
         curr = c6.selectbox("Currency", ["AED", "USD", "EUR", "SAR", "INR", "GBP", "CNY"], key=f"quote_curr_{i}")
 
         total = unit * price * (1 + vat / 100)
-        c7.metric("Total", f"{curr} {total:,.2f}")
 
-        if desc or carrier or total > 0:
+        c7.metric("Total", f"{curr} {total:,.2f}")
+        remarks = c8.text_input("Remarks", key=f"quote_remarks_{i}")
+
+        if desc or carrier or total > 0 or remarks:
             lines.append(
                 {
                     "description": desc,
@@ -416,9 +416,14 @@ def quote_lines_section():
                     "vat": vat,
                     "currency": curr,
                     "total": total,
+                    "remarks": remarks,
                 }
             )
             totals_by_currency[curr] = totals_by_currency.get(curr, 0) + total
+
+    if st.button("+ Add Quote Line", key="add_quote_line_button"):
+        st.session_state.line_rows += 1
+        st.rerun()
 
     if totals_by_currency:
         st.success(
