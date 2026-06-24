@@ -378,7 +378,7 @@ def cargo_section(mode):
     return rows
 
 
-def quote_lines_section(usd_to_aed=3.685):
+def quote_lines_section(usd_to_aed=3.675):
     st.markdown("#### Manual Quote Lines")
 
     if "line_rows" not in st.session_state:
@@ -388,21 +388,71 @@ def quote_lines_section(usd_to_aed=3.685):
     totals_by_currency = {}
     total_aed_equivalent = 0.0
 
+    # Header only once
+    h1, h2, h3, h4, h5, h6, h7, h8 = st.columns(
+        [2.0, 1.3, 0.8, 1.0, 0.8, 0.8, 1.0, 1.8]
+    )
+
+    h1.markdown("**Description**")
+    h2.markdown("**Carrier**")
+    h3.markdown("**Unit**")
+    h4.markdown("**Unit Price**")
+    h5.markdown("**VAT %**")
+    h6.markdown("**Currency**")
+    h7.markdown("**Total**")
+    h8.markdown("**Remarks**")
+
     for i in range(st.session_state.line_rows):
 
-        st.markdown("##### Charges")    
-        
-
-        c1, c2, c3, c4, c5, c6, c7, c8, c9 = st.columns(
-            [1.8, 1.1, 0.7, 0.9, 0.7, 0.8, 1.0, 1.0, 1.5]
+        c1, c2, c3, c4, c5, c6, c7, c8 = st.columns(
+            [2.0, 1.3, 0.8, 1.0, 0.8, 0.8, 1.0, 1.8]
         )
 
-        desc = c1.text_input("Description", key=f"quote_desc_{i}")
-        carrier = c2.text_input("Carrier", key=f"quote_carrier_{i}")
-        unit = c3.number_input("Unit", min_value=0.0, value=0.0, step=1.0, key=f"quote_unit_{i}")
-        price = c4.number_input("Unit Price", min_value=0.0, value=0.0, step=1.0, key=f"quote_price_{i}")
-        vat = c5.number_input("VAT %", min_value=0.0, value=0.0, step=1.0, key=f"quote_vat_{i}")
-        curr = c6.selectbox("Currency", ["AED", "USD", "EUR", "SAR", "INR", "GBP", "CNY"], key=f"quote_curr_{i}")
+        desc = c1.text_input(
+            "Description",
+            key=f"quote_desc_{i}",
+            label_visibility="collapsed"
+        )
+
+        carrier = c2.text_input(
+            "Carrier",
+            key=f"quote_carrier_{i}",
+            label_visibility="collapsed"
+        )
+
+        unit = c3.number_input(
+            "Unit",
+            min_value=0.0,
+            value=0.0,
+            step=1.0,
+            key=f"quote_unit_{i}",
+            label_visibility="collapsed"
+        )
+
+        price = c4.number_input(
+            "Unit Price",
+            min_value=0.0,
+            value=0.0,
+            step=1.0,
+            key=f"quote_price_{i}",
+            label_visibility="collapsed"
+        )
+
+        vat = c5.number_input(
+            "VAT %",
+            min_value=0.0,
+            value=0.0,
+            step=1.0,
+            key=f"quote_vat_{i}",
+            label_visibility="collapsed"
+        )
+
+        curr = c6.selectbox(
+            "Currency",
+            ["AED", "USD", "EUR", "SAR", "INR", "GBP", "CNY"],
+            key=f"quote_curr_{i}",
+            label_visibility="collapsed"
+        )
 
         total = unit * price
         total = total + (total * vat / 100)
@@ -414,10 +464,19 @@ def quote_lines_section(usd_to_aed=3.685):
         else:
             aed_value = 0.0
 
-        c7.metric("Total", f"{curr} {total:,.2f}")
-        c8.metric("AED Value", f"AED {aed_value:,.2f}")
+        c7.text_input(
+            "Total",
+            value=f"{total:,.2f}",
+            key=f"quote_total_display_{i}",
+            disabled=True,
+            label_visibility="collapsed"
+        )
 
-        remarks = c9.text_input("Remarks", key=f"quote_remarks_{i}")
+        remarks = c8.text_input(
+            "Remarks",
+            key=f"quote_remarks_{i}",
+            label_visibility="collapsed"
+        )
 
         if desc or carrier or unit > 0 or price > 0 or remarks:
             lines.append(
@@ -437,17 +496,12 @@ def quote_lines_section(usd_to_aed=3.685):
             totals_by_currency[curr] = totals_by_currency.get(curr, 0) + total
             total_aed_equivalent += aed_value
 
-        st.markdown("<hr style='margin:3px 0;'>", unsafe_allow_html=True)
-
     if st.button("+ Add Quote Line", key="add_quote_line_button"):
         st.session_state.line_rows += 1
         st.rerun()
 
-    st.markdown("---")
-
     if totals_by_currency:
         summary = []
-
         for curr, value in totals_by_currency.items():
             summary.append(f"{curr} {value:,.2f}")
 
@@ -458,7 +512,6 @@ def quote_lines_section(usd_to_aed=3.685):
         )
 
     return lines, totals_by_currency
-
 def make_pdf(data):
     buf = io.BytesIO()
 
