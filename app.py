@@ -388,9 +388,9 @@ def quote_lines_section():
 
     lines = []
     if st.button("+ Add Quote Line", key="add_quote_line_button"):
-    st.session_state.line_rows += 1
-    st.rerun()
-    totals_by_currency = {}
+       st.session_state.line_rows += 1
+       st.rerun()
+       totals_by_currency = {}
 
     for i in range(st.session_state.line_rows):
         st.markdown(f"Line {i + 1}")
