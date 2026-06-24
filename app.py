@@ -457,10 +457,7 @@ def quote_lines_section(usd_to_aed=3.675):
         total = unit * price
         total = total + (total * vat / 100)
 
-        if curr == "AED":
-            aed_value = total
-        else:
-            aed_value = total * exchange_rate
+        aed_value = total * exchange_rate
 
         c7.text_input(
             "Total",
