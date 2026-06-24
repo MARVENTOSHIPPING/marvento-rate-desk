@@ -963,8 +963,8 @@ def quote_page():
         st.success(f"Loaded enquiry: {selected['enquiry_no']}")
 
        if selected:
-    customer = selected.get("customer_name", "")
-    walk_in = False
+            customer = selected.get("customer_name", "")
+            walk_in = False
 else:
     walk_in = st.checkbox(
         "Walk-in Customer",
