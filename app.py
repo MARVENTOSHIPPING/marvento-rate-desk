@@ -378,7 +378,7 @@ def cargo_section(mode):
     return rows
 
 
-def quote_lines_section(usd_to_aed=3.675):
+def quote_lines_section(usd_to_aed=3.685):
     st.markdown("#### Manual Quote Lines")
 
     if "line_rows" not in st.session_state:
