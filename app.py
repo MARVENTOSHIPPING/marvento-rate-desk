@@ -1121,7 +1121,15 @@ def quote_page():
 
     cargo_rows = cargo_section(mode)
 
-    lines, totals = quote_lines_section()
+    usd_to_aed = st.number_input(
+    "USD to AED Exchange Rate",
+    min_value=0.0,
+    value=3.675,
+    step=0.001,
+    key="usd_to_aed_rate"
+)
+
+lines, totals = quote_lines_section(usd_to_aed)
 
     quote_no = next_no("MQ", "quotes", "quote_no")
 
