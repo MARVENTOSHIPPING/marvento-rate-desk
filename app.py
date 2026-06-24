@@ -934,7 +934,7 @@ def enquiry_page():
 
 def quote_page():
     st.subheader("Quotation Generator")
-    
+
     customers = customer_options()
 
     enqs = qdf(
@@ -962,7 +962,7 @@ def quote_page():
 
         st.success(f"Loaded enquiry: {selected['enquiry_no']}")
 
-        if selected:
+    if selected:
         customer = selected.get("customer_name", "")
         walk_in = False
     else:
@@ -988,28 +988,30 @@ def quote_page():
                     "Customer",
                     key="quote_customer_text"
                 )
-cust = get_customer(customer) if not walk_in else {}
-if not selected and walk_in:
-    w1, w2, w3 = st.columns(3)
 
-    walk_in_contact = w1.text_input(
-        "Contact Person",
-        key="quote_walk_in_contact"
-    )
+    cust = get_customer(customer) if not walk_in else {}
 
-    walk_in_email = w2.text_input(
-        "Customer Email",
-        key="quote_walk_in_email"
-    )
+    if walk_in:
+        w1, w2, w3 = st.columns(3)
 
-    walk_in_phone = w3.text_input(
-        "Customer Phone",
-        key="quote_walk_in_phone"
-    )
-else:
-    walk_in_contact = ""
-    walk_in_email = ""
-    walk_in_phone = ""
+        walk_in_contact = w1.text_input(
+            "Contact Person",
+            key="quote_walk_in_contact"
+        )
+
+        walk_in_email = w2.text_input(
+            "Customer Email",
+            key="quote_walk_in_email"
+        )
+
+        walk_in_phone = w3.text_input(
+            "Customer Phone",
+            key="quote_walk_in_phone"
+        )
+    else:
+        walk_in_contact = ""
+        walk_in_email = ""
+        walk_in_phone = ""
 
     mode_options = ["Air", "Sea", "Courier", "Land"]
     service_options = ["EXW", "FCA", "FOB", "CIF", "CPT", "DAP", "DDU", "DDP"]
@@ -1056,23 +1058,23 @@ else:
 
     e, f, g = st.columns(3)
 
-   attention_to = e.text_input(
-    "Attention To",
-    value=walk_in_contact if walk_in else (cust.get("contact_person", "") if cust else ""),
-    key="quote_attention_input"
-)
+    attention_to = e.text_input(
+        "Attention To",
+        value=walk_in_contact if walk_in else (cust.get("contact_person", "") if cust else ""),
+        key="quote_attention_input"
+    )
 
-customer_email = f.text_input(
-    "Customer Email",
-    value=walk_in_email if walk_in else (cust.get("email", "") if cust else ""),
-    key="quote_email_input"
-)
+    customer_email = f.text_input(
+        "Customer Email",
+        value=walk_in_email if walk_in else (cust.get("email", "") if cust else ""),
+        key="quote_email_input"
+    )
 
-customer_phone = g.text_input(
-    "Customer Phone",
-    value=walk_in_phone if walk_in else (cust.get("phone", "") if cust else ""),
-    key="quote_phone_input"
-)
+    customer_phone = g.text_input(
+        "Customer Phone",
+        value=walk_in_phone if walk_in else (cust.get("phone", "") if cust else ""),
+        key="quote_phone_input"
+    )
 
     validity = st.text_input(
         "Rate Validity",
