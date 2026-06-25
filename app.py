@@ -2020,12 +2020,12 @@ def quote_page():
             )
         )
     if selected and selected.get("cargo_summary"):
-    st.text_area(
-        "Cargo Summary from Enquiry",
-        value=selected.get("cargo_summary", ""),
-        key="quote_loaded_cargo_summary",
-        disabled=True,
-    )
+        st.text_area(
+            "Cargo Summary from Enquiry",
+            value=selected.get("cargo_summary", ""),
+            key="quote_loaded_cargo_summary",
+            disabled=True,
+        )
 
     ai_cargo_upload_section()
 
