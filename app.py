@@ -1245,62 +1245,83 @@ def dashboard():
                 st.success("Go to Create Quote tab and tick 'Create from existing enquiry'.")
 
     with right:
-        st.markdown("#### Quote")
+    st.markdown("#### Quote")
 
-        if quote_df.empty:
-            st.info("No quotes yet.")
-        else:
-            quote_no = st.selectbox(
-                "Select Quote",
-                quote_df["quote_no"].tolist(),
-                key="dash_quote_select",
+    if quote_df.empty:
+        st.info("No quotes yet.")
+
+    else:
+        quote_no = st.selectbox(
+            "Select Quote Number",
+            quote_df["quote_no"].tolist(),
+            key="dash_quote_select",
+        )
+
+        q = quote_df[
+            quote_df["quote_no"] == quote_no
+        ].iloc[0].to_dict()
+
+        st.table(
+            pd.DataFrame(
+                [
+                    ["Quote No", q.get("quote_no", "")],
+                    ["Customer", q.get("customer_name", "")],
+                    ["Mode", q.get("mode", "")],
+                    ["Origin", q.get("origin", "")],
+                    ["Destination", q.get("destination", "")],
+                    ["Total", f"{q.get('currency', '')} {q.get('total', 0):,.2f}"],
+                    ["Current Status", q.get("status", "")],
+                    ["Sales Person", q.get("salesperson", "")],
+                    ["CSP Name", q.get("csp_name", "")],
+                ],
+                columns=["Field", "Value"],
+            )
+        )
+
+        new_status = st.selectbox(
+            "Update Quote Status",
+            ["Draft", "Sent", "Confirmed", "Lost", "Cancelled"],
+            index=["Draft", "Sent", "Confirmed", "Lost", "Cancelled"].index(
+                q.get("status", "Draft")
+                if q.get("status", "Draft") in ["Draft", "Sent", "Confirmed", "Lost", "Cancelled"]
+                else "Draft"
+            ),
+            key="dash_quote_status_select",
+        )
+
+        cdb = conn()
+        cur = cdb.cursor()
+
+        cur.execute(
+            "SELECT pdf, enquiry_no FROM quotes WHERE quote_no=?",
+            (quote_no,),
+        )
+
+        row = cur.fetchone()
+        cdb.close()
+
+        if row and row[0]:
+            st.download_button(
+                "Download Selected Quote PDF",
+                data=row[0],
+                file_name=f"{quote_no}.pdf",
+                mime="application/pdf",
+                key="dash_download_quote_pdf",
             )
 
-            q = quote_df[quote_df["quote_no"] == quote_no].iloc[0].to_dict()
-
-            st.table(
-                pd.DataFrame(
-                    [
-                        ["Quote No", q.get("quote_no", "")],
-                        ["Customer", q.get("customer_name", "")],
-                        ["Mode", q.get("mode", "")],
-                        ["Origin", q.get("origin", "")],
-                        ["Destination", q.get("destination", "")],
-                        ["Total", f"{q.get('currency', '')} {q.get('total', 0):,.2f}"],
-                        ["Status", q.get("status", "")],
-                        ["Sales Person", q.get("salesperson", "")],
-                        ["CSP Name", q.get("csp_name", "")],
-                    ],
-                    columns=["Field", "Value"],
-                )
-            )
+        if st.button(
+            "Update Quote Status",
+            key="dash_update_quote_status",
+        ):
+            now = dt.datetime.now().isoformat(timespec="seconds")
 
             cdb = conn()
             cur = cdb.cursor()
-            cur.execute(
-                "SELECT pdf, enquiry_no FROM quotes WHERE quote_no=?",
-                (quote_no,),
-            )
-            row = cur.fetchone()
-            cdb.close()
 
-            if row and row[0]:
-                st.download_button(
-                    "Download Selected Quote PDF",
-                    data=row[0],
-                    file_name=f"{quote_no}.pdf",
-                    mime="application/pdf",
-                    key="dash_download_quote_pdf",
-                )
-
-            if st.button("Confirm Quote", key="dash_confirm_quote"):
-                now = dt.datetime.now().isoformat(timespec="seconds")
-
-                cdb = conn()
-                cur = cdb.cursor()
+            if new_status == "Confirmed":
                 cur.execute(
-                    "UPDATE quotes SET status='Confirmed', confirmed_at=? WHERE quote_no=?",
-                    (now, quote_no),
+                    "UPDATE quotes SET status=?, confirmed_at=? WHERE quote_no=?",
+                    (new_status, now, quote_no),
                 )
 
                 if row and row[1]:
@@ -1309,12 +1330,26 @@ def dashboard():
                         (row[1],),
                     )
 
-                cdb.commit()
-                cdb.close()
+            else:
+                cur.execute(
+                    "UPDATE quotes SET status=? WHERE quote_no=?",
+                    (new_status, quote_no),
+                )
 
-                st.success(f"Quote confirmed: {quote_no}")
-                st.rerun()
+                if row and row[1] and new_status == "Lost":
+                    cur.execute(
+                        "UPDATE enquiries SET status='Lost' WHERE enquiry_no=?",
+                        (row[1],),
+                    )
 
+            cdb.commit()
+            cdb.close()
+
+            st.success(
+                f"Quote {quote_no} status updated to {new_status}"
+            )
+
+            st.rerun()
     st.markdown("### Recent Enquiries")
     st.dataframe(enq_df, use_container_width=True)
 
