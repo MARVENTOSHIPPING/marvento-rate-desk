@@ -1757,9 +1757,9 @@ def quote_page():
 
     customers = customer_options()
 
-        enqs = qdf(
-            "SELECT * FROM enquiries ORDER BY id DESC"
-        )
+    enqs = qdf(
+        "SELECT * FROM enquiries ORDER BY id DESC"
+    )
 
     use_enq = st.checkbox(
         "Create from existing enquiry",
