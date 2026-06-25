@@ -1191,60 +1191,20 @@ def dashboard():
     st.subheader("Dashboard")
 
     c1, c2, c3, c4 = st.columns(4)
-
-    c1.metric(
-        "Customers",
-        len(qdf("SELECT id FROM customers")),
-    )
-
-    c2.metric(
-        "Open Enquiries",
-        len(qdf("SELECT id FROM enquiries WHERE status='Open'")),
-    )
-
-    c3.metric(
-        "Quotes",
-        len(qdf("SELECT id FROM quotes")),
-    )
-
-    c4.metric(
-        "Confirmed Quotes",
-        len(qdf("SELECT id FROM quotes WHERE status='Confirmed'")),
-    )
-
-    d1, d2, d3, d4 = st.columns(4)
-
-    d1.metric(
-        "Won Enquiries",
-        len(qdf("SELECT id FROM enquiries WHERE status='Won'")),
-    )
-
-    d2.metric(
-        "Lost Enquiries",
-        len(qdf("SELECT id FROM enquiries WHERE status='Lost'")),
-    )
-
-    d3.metric(
-        "Draft Quotes",
-        len(qdf("SELECT id FROM quotes WHERE status='Draft'")),
-    )
-
-    d4.metric(
-        "Quoted Enquiries",
-        len(qdf("SELECT id FROM enquiries WHERE status='Quoted'")),
-    )
+    c1.metric("Customers", len(qdf("SELECT id FROM customers")))
+    c2.metric("Open Enquiries", len(qdf("SELECT id FROM enquiries WHERE status='Open'")))
+    c3.metric("Quotes", len(qdf("SELECT id FROM quotes")))
+    c4.metric("Confirmed Quotes", len(qdf("SELECT id FROM quotes WHERE status='Confirmed'")))
 
     st.markdown("### Open Enquiry / Quote")
 
     enq_df = qdf(
-        "SELECT enquiry_no, customer_name, mode, origin, destination, status, "
-        "csp_name, salesperson "
+        "SELECT enquiry_no, customer_name, mode, origin, destination, status, csp_name, salesperson "
         "FROM enquiries ORDER BY id DESC"
     )
 
     quote_df = qdf(
-        "SELECT quote_no, enquiry_no, customer_name, mode, origin, destination, "
-        "total, currency, status, salesperson, csp_name "
+        "SELECT quote_no, enquiry_no, customer_name, mode, origin, destination, total, currency, status, salesperson, csp_name "
         "FROM quotes ORDER BY id DESC"
     )
 
@@ -1253,72 +1213,74 @@ def dashboard():
     with left:
         st.markdown("#### Enquiry")
 
-        if not enq_df.empty:
+        if enq_df.empty:
+            st.info("No enquiries yet.")
+        else:
             enq_no = st.selectbox(
                 "Select Enquiry",
                 enq_df["enquiry_no"].tolist(),
                 key="dash_enquiry_select",
             )
 
-            enq = enq_df[
-                enq_df["enquiry_no"] == enq_no
-            ].iloc[0].to_dict()
+            enq = enq_df[enq_df["enquiry_no"] == enq_no].iloc[0].to_dict()
 
-        st.markdown("#### Enquiry Details")
-
-        st.table(
-            pd.DataFrame(
-                [
-                    ["Enquiry No", enq.get("enquiry_no", "")],
-                    ["Customer", enq.get("customer_name", "")],
-                    ["Mode", enq.get("mode", "")],
-                    ["Origin", enq.get("origin", "")],
-                    ["Destination", enq.get("destination", "")],
-                    ["Status", enq.get("status", "")],
-                    ["CSP Name", enq.get("csp_name", "")],
-                    ["Sales Person", enq.get("salesperson", "")],
-                ],
-                columns=["Field", "Value"],
-          )
-         )
-
-        if st.button(
-                "Create Quote from this Enquiry",
-                key="dash_create_quote",
-        ):
-            st.session_state.dashboard_enquiry_no = enq_no
-
-            st.success(
-                    "Go to Create Quote tab and tick 'Create from existing enquiry'."
+            st.table(
+                pd.DataFrame(
+                    [
+                        ["Enquiry No", enq.get("enquiry_no", "")],
+                        ["Customer", enq.get("customer_name", "")],
+                        ["Mode", enq.get("mode", "")],
+                        ["Origin", enq.get("origin", "")],
+                        ["Destination", enq.get("destination", "")],
+                        ["Status", enq.get("status", "")],
+                        ["CSP Name", enq.get("csp_name", "")],
+                        ["Sales Person", enq.get("salesperson", "")],
+                    ],
+                    columns=["Field", "Value"],
+                )
             )
 
-        else:
-            st.info("No enquiries yet.")
+            if st.button("Create Quote from this Enquiry", key="dash_create_quote"):
+                st.session_state.dashboard_enquiry_no = enq_no
+                st.success("Go to Create Quote tab and tick 'Create from existing enquiry'.")
 
     with right:
         st.markdown("#### Quote")
 
-        if not quote_df.empty:
+        if quote_df.empty:
+            st.info("No quotes yet.")
+        else:
             quote_no = st.selectbox(
                 "Select Quote",
                 quote_df["quote_no"].tolist(),
                 key="dash_quote_select",
             )
 
-            q = quote_df[
-                quote_df["quote_no"] == quote_no
-            ].iloc[0].to_dict()
+            q = quote_df[quote_df["quote_no"] == quote_no].iloc[0].to_dict()
 
-            st.write(q)
+            st.table(
+                pd.DataFrame(
+                    [
+                        ["Quote No", q.get("quote_no", "")],
+                        ["Customer", q.get("customer_name", "")],
+                        ["Mode", q.get("mode", "")],
+                        ["Origin", q.get("origin", "")],
+                        ["Destination", q.get("destination", "")],
+                        ["Total", f"{q.get('currency', '')} {q.get('total', 0):,.2f}"],
+                        ["Status", q.get("status", "")],
+                        ["Sales Person", q.get("salesperson", "")],
+                        ["CSP Name", q.get("csp_name", "")],
+                    ],
+                    columns=["Field", "Value"],
+                )
+            )
 
             cdb = conn()
             cur = cdb.cursor()
-
             cur.execute(
                 "SELECT pdf, enquiry_no FROM quotes WHERE quote_no=?",
                 (quote_no,),
             )
-
             row = cur.fetchone()
             cdb.close()
 
@@ -1331,23 +1293,14 @@ def dashboard():
                     key="dash_download_quote_pdf",
                 )
 
-            if st.button(
-                "Confirm Quote",
-                key="dash_confirm_quote",
-            ):
-                now = dt.datetime.now().isoformat(
-                    timespec="seconds"
-                )
+            if st.button("Confirm Quote", key="dash_confirm_quote"):
+                now = dt.datetime.now().isoformat(timespec="seconds")
 
                 cdb = conn()
                 cur = cdb.cursor()
-
                 cur.execute(
                     "UPDATE quotes SET status='Confirmed', confirmed_at=? WHERE quote_no=?",
-                    (
-                        now,
-                        quote_no,
-                    ),
+                    (now, quote_no),
                 )
 
                 if row and row[1]:
@@ -1359,28 +1312,14 @@ def dashboard():
                 cdb.commit()
                 cdb.close()
 
-                st.success(
-                    f"Quote confirmed: {quote_no}"
-                )
-
+                st.success(f"Quote confirmed: {quote_no}")
                 st.rerun()
 
-        else:
-            st.info("No quotes yet.")
-
     st.markdown("### Recent Enquiries")
-
-    st.dataframe(
-        enq_df,
-        use_container_width=True,
-    )
+    st.dataframe(enq_df, use_container_width=True)
 
     st.markdown("### Recent Quotes")
-
-    st.dataframe(
-        quote_df,
-        use_container_width=True,
-    )
+    st.dataframe(quote_df, use_container_width=True)
 
 
 def customers_page():
