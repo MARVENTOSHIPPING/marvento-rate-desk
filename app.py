@@ -1757,11 +1757,9 @@ def quote_page():
 
     customers = customer_options()
 
-    enqs = qdf(
-        "SELECT enquiry_no, customer_name, mode, service, origin, destination, "
-        "cargo_summary, csp_name, salesperson "
-        "FROM enquiries ORDER BY id DESC"
-    )
+        enqs = qdf(
+            "SELECT * FROM enquiries ORDER BY id DESC"
+        )
 
     use_enq = st.checkbox(
         "Create from existing enquiry",
@@ -2000,6 +1998,34 @@ def quote_page():
         st.info(
             f"Cargo Summary from Enquiry: {selected.get('cargo_summary')}"
         )
+    if selected:
+    st.markdown("#### Enquiry Details Loaded")
+
+    st.table(
+        pd.DataFrame(
+            [
+                ["Enquiry No", selected.get("enquiry_no", "")],
+                ["Customer", selected.get("customer_name", "")],
+                ["Mode", selected.get("mode", "")],
+                ["Service", selected.get("service", "")],
+                ["Origin", selected.get("origin", "")],
+                ["Destination", selected.get("destination", "")],
+                ["Cargo Ready Date", selected.get("cargo_ready_date", "")],
+                ["Follow Up Date", selected.get("follow_up_date", "")],
+                ["CSP Name", selected.get("csp_name", "")],
+                ["Sales Person", selected.get("salesperson", "")],
+                ["Cargo Summary", selected.get("cargo_summary", "")],
+            ],
+            columns=["Field", "Value"],
+        )
+    )
+    if selected and selected.get("cargo_summary"):
+    st.text_area(
+        "Cargo Summary from Enquiry",
+        value=selected.get("cargo_summary", ""),
+        key="quote_loaded_cargo_summary",
+        disabled=True,
+    )
 
     ai_cargo_upload_section()
 
