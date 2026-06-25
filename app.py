@@ -1279,6 +1279,18 @@ def quote_page():
 
     col1, col2 = st.columns(2)
 
+    csp_name = col1.text_input(
+        "CSP Name",
+        value=selected_enquiry.get("csp_name", "") if selected_enquiry else "",
+        key="enquiry_csp_name"
+)
+
+    sales_person = col2.text_input(
+        "Sales Person",
+        value=selected_enquiry.get("salesperson", st.session_state.get("name", "")) if selected_enquiry else st.session_state.get("name", ""),
+        key="enquiry_sales_person"
+)
+
     with col1:
         if pdf:
             st.download_button(
