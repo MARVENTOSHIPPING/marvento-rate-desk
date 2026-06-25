@@ -269,11 +269,10 @@ def cargo_section(mode):
     st.markdown("#### Cargo Details")
 
     if "cargo_rows" not in st.session_state:
-        st.session_state.cargo_rows = 1
+        st.session_state.cargo_rows = 3
 
-    if st.button("+ Add Cargo Row", key="add_cargo_row_button"):
-        st.session_state.cargo_rows += 1
-        st.rerun()
+    if st.session_state.cargo_rows < 3:
+        st.session_state.cargo_rows = 3
 
     rows = []
 
@@ -282,21 +281,54 @@ def cargo_section(mode):
         total_gw = 0.0
         total_containers = 0
 
-        for i in range(st.session_state.cargo_rows):
-            st.markdown(f"Cargo Row {i + 1}")
-            a, b, c, d, e = st.columns([1.2, 1.1, 1.2, 1.2, 2.5])
+        # Header only once
+        h1, h2, h3, h4, h5 = st.columns([1.2, 1.1, 1.2, 1.2, 2.5])
+        h1.markdown("**Equipment**")
+        h2.markdown("**CBM / Qty**")
+        h3.markdown("**Gross Weight KG**")
+        h4.markdown("**Packages**")
+        h5.markdown("**Cargo Description**")
 
-            eq = a.selectbox(
+        for i in range(st.session_state.cargo_rows):
+            c1, c2, c3, c4, c5 = st.columns([1.2, 1.1, 1.2, 1.2, 2.5])
+
+            eq = c1.selectbox(
                 "Equipment",
                 ["LCL", "20DV", "40STD", "40HC", "40RF", "40FR", "45HC"],
                 key=f"sea_equipment_{i}",
+                label_visibility="collapsed"
             )
 
             if eq == "LCL":
-                cbm = b.number_input("CBM", min_value=0.0, value=0.0, key=f"sea_cbm_{i}")
-                gw = c.number_input("Gross Weight KG", min_value=0.0, value=0.0, key=f"sea_gw_{i}")
-                packages = d.number_input("Packages", min_value=1, value=1, key=f"sea_pkg_{i}")
-                desc = e.text_input("Cargo Description", key=f"sea_desc_{i}")
+                cbm = c2.number_input(
+                    "CBM",
+                    min_value=0.0,
+                    value=0.0,
+                    key=f"sea_cbm_{i}",
+                    label_visibility="collapsed"
+                )
+
+                gw = c3.number_input(
+                    "Gross Weight KG",
+                    min_value=0.0,
+                    value=0.0,
+                    key=f"sea_gw_{i}",
+                    label_visibility="collapsed"
+                )
+
+                packages = c4.number_input(
+                    "Packages",
+                    min_value=1,
+                    value=1,
+                    key=f"sea_pkg_{i}",
+                    label_visibility="collapsed"
+                )
+
+                desc = c5.text_input(
+                    "Cargo Description",
+                    key=f"sea_desc_{i}",
+                    label_visibility="collapsed"
+                )
 
                 total_cbm += cbm
                 total_gw += gw
@@ -312,9 +344,35 @@ def cargo_section(mode):
                 )
 
             else:
-                qty = b.number_input("Container Qty", min_value=1, value=1, key=f"sea_container_qty_{i}")
-                gw = c.number_input("Gross Weight KG", min_value=0.0, value=0.0, key=f"sea_fcl_gw_{i}")
-                desc = e.text_input("Cargo Description", key=f"sea_fcl_desc_{i}")
+                qty = c2.number_input(
+                    "Container Qty",
+                    min_value=1,
+                    value=1,
+                    key=f"sea_container_qty_{i}",
+                    label_visibility="collapsed"
+                )
+
+                gw = c3.number_input(
+                    "Gross Weight KG",
+                    min_value=0.0,
+                    value=0.0,
+                    key=f"sea_fcl_gw_{i}",
+                    label_visibility="collapsed"
+                )
+
+                packages = c4.number_input(
+                    "Packages",
+                    min_value=0,
+                    value=0,
+                    key=f"sea_fcl_pkg_{i}",
+                    label_visibility="collapsed"
+                )
+
+                desc = c5.text_input(
+                    "Cargo Description",
+                    key=f"sea_fcl_desc_{i}",
+                    label_visibility="collapsed"
+                )
 
                 total_containers += qty
                 total_gw += gw
@@ -323,10 +381,15 @@ def cargo_section(mode):
                     {
                         "equipment": eq,
                         "qty": qty,
+                        "packages": packages,
                         "gross_weight": gw,
                         "description": desc,
                     }
                 )
+
+        if st.button("+ Add Cargo Row", key="add_cargo_row_button"):
+            st.session_state.cargo_rows += 1
+            st.rerun()
 
         st.info(
             f"Sea Summary: Total CBM {total_cbm:.3f} | Total Gross Weight {total_gw:.2f} KG | Total Containers {total_containers}"
@@ -337,23 +400,72 @@ def cargo_section(mode):
         total_gw = 0.0
         total_chw = 0.0
 
-        for i in range(st.session_state.cargo_rows):
-            st.markdown(f"Cargo Row {i + 1}")
-            a, b, c, d, e, f, g = st.columns([0.8, 1, 1, 1, 1, 1, 1])
+        # Header only once
+        h1, h2, h3, h4, h5, h6, h7 = st.columns([0.8, 1, 1, 1, 1, 1, 1])
+        h1.markdown("**Pcs**")
+        h2.markdown("**L cm**")
+        h3.markdown("**W cm**")
+        h4.markdown("**H cm**")
+        h5.markdown("**Gross KG**")
+        h6.markdown("**CBM**")
+        h7.markdown("**Chg KG**")
 
-            pcs = a.number_input("Pcs", min_value=1, value=1, key=f"air_pcs_{i}")
-            l = b.number_input("L cm", min_value=0.0, value=0.0, key=f"air_l_{i}")
-            w = c.number_input("W cm", min_value=0.0, value=0.0, key=f"air_w_{i}")
-            h = d.number_input("H cm", min_value=0.0, value=0.0, key=f"air_h_{i}")
-            gw = e.number_input("Gross KG", min_value=0.0, value=0.0, key=f"air_gw_{i}")
+        for i in range(st.session_state.cargo_rows):
+            c1, c2, c3, c4, c5, c6, c7 = st.columns([0.8, 1, 1, 1, 1, 1, 1])
+
+            pcs = c1.number_input(
+                "Pcs",
+                min_value=1,
+                value=1,
+                key=f"air_pcs_{i}",
+                label_visibility="collapsed"
+            )
+
+            l = c2.number_input(
+                "L cm",
+                min_value=0.0,
+                value=0.0,
+                key=f"air_l_{i}",
+                label_visibility="collapsed"
+            )
+
+            w = c3.number_input(
+                "W cm",
+                min_value=0.0,
+                value=0.0,
+                key=f"air_w_{i}",
+                label_visibility="collapsed"
+            )
+
+            h = c4.number_input(
+                "H cm",
+                min_value=0.0,
+                value=0.0,
+                key=f"air_h_{i}",
+                label_visibility="collapsed"
+            )
+
+            gw = c5.number_input(
+                "Gross KG",
+                min_value=0.0,
+                value=0.0,
+                key=f"air_gw_{i}",
+                label_visibility="collapsed"
+            )
 
             cbm = (l * w * h * pcs) / 1_000_000 if l and w and h else 0.0
-            divisor = 6000
-            vol = (l * w * h * pcs) / divisor if l and w and h else 0.0
+            vol = (l * w * h * pcs) / 6000 if l and w and h else 0.0
             chw = max(gw, vol)
 
-            f.metric("CBM", f"{cbm:.3f}")
-            g.metric("Chg KG", f"{chw:.2f}")
+            c6.markdown(
+                f"<div style='background:#eef1f5; padding:14px; border-radius:8px;'>{cbm:.3f}</div>",
+                unsafe_allow_html=True
+            )
+
+            c7.markdown(
+                f"<div style='background:#eef1f5; padding:14px; border-radius:8px;'>{chw:.2f}</div>",
+                unsafe_allow_html=True
+            )
 
             total_cbm += cbm
             total_gw += gw
@@ -371,12 +483,15 @@ def cargo_section(mode):
                 }
             )
 
+        if st.button("+ Add Cargo Row", key="add_cargo_row_button"):
+            st.session_state.cargo_rows += 1
+            st.rerun()
+
         st.info(
             f"Total Gross Weight: {total_gw:.2f} KG | Total CBM: {total_cbm:.3f} | Total Chargeable Weight: {total_chw:.2f} KG"
         )
 
     return rows
-
 
 def quote_lines_section(exchange_rate=3.675):
     st.markdown("#### Manual Quote Lines")
