@@ -1245,17 +1245,17 @@ def dashboard():
                 st.success("Go to Create Quote tab and tick 'Create from existing enquiry'.")
 
     with right:
-    st.markdown("#### Quote")
+        st.markdown("#### Quote")
 
-    if quote_df.empty:
-        st.info("No quotes yet.")
+        if quote_df.empty:
+            st.info("No quotes yet.")
 
-    else:
-        quote_no = st.selectbox(
-            "Select Quote Number",
-            quote_df["quote_no"].tolist(),
-            key="dash_quote_select",
-        )
+        else:
+            quote_no = st.selectbox(
+                "Select Quote Number",
+                quote_df["quote_no"].tolist(),
+                key="dash_quote_select",
+            )
 
         q = quote_df[
             quote_df["quote_no"] == quote_no
