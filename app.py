@@ -1279,18 +1279,18 @@ def dashboard():
                     ["Sales Person", enq.get("salesperson", "")],
                 ],
                 columns=["Field", "Value"],
-            )
-    )
+          )
+         )
 
-           if st.button(
+        if st.button(
                 "Create Quote from this Enquiry",
                 key="dash_create_quote",
-            ):
-                st.session_state.dashboard_enquiry_no = enq_no
+        ):
+            st.session_state.dashboard_enquiry_no = enq_no
 
-                st.success(
+            st.success(
                     "Go to Create Quote tab and tick 'Create from existing enquiry'."
-                )
+            )
 
         else:
             st.info("No enquiries yet.")
