@@ -1264,7 +1264,23 @@ def dashboard():
                 enq_df["enquiry_no"] == enq_no
             ].iloc[0].to_dict()
 
-            st.write(enq)
+        st.markdown("#### Enquiry Details")
+
+        st.table(
+            pd.DataFrame(
+                [
+                    ["Enquiry No", enq.get("enquiry_no", "")],
+                    ["Customer", enq.get("customer_name", "")],
+                    ["Mode", enq.get("mode", "")],
+                    ["Origin", enq.get("origin", "")],
+                    ["Destination", enq.get("destination", "")],
+                    ["Status", enq.get("status", "")],
+                    ["CSP Name", enq.get("csp_name", "")],
+                    ["Sales Person", enq.get("salesperson", "")],
+                ],
+                columns=["Field", "Value"],
+            )
+    )
 
             if st.button(
                 "Create Quote from this Enquiry",
