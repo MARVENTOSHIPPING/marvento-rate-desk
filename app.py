@@ -1586,32 +1586,17 @@ def enquiry_page():
 
         p1, p2 = st.columns(2)
 
-        csp_name = p1.selectbox(
+        csp_name = p1.text_input(
             "CSP Name",
-            CSP_OPTIONS,
-            index=option_index(
-                CSP_OPTIONS,
-                selected_enquiry.get("csp_name")
-                if selected_enquiry
-                else "",
-                0,
-            ),
+            value=selected_enquiry.get("csp_name", "") if selected_enquiry else "",
             key="enquiry_csp_name_input",
         )
 
-        salesperson = p2.selectbox(
+        salesperson = p2.text_input(
             "Sales Person",
-            SALES_OPTIONS,
-            index=option_index(
-                SALES_OPTIONS,
-                selected_enquiry.get("salesperson")
-                if selected_enquiry
-                else st.session_state.get("name", ""),
-                0,
-            ),
+            value=selected_enquiry.get("salesperson", st.session_state.get("name", "")) if selected_enquiry else st.session_state.get("name", ""),
             key="enquiry_salesperson_input",
         )
-
         cargo = st.text_area(
             "Cargo Summary",
             value=selected_enquiry.get("cargo_summary", "")
